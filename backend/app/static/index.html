@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GaRC - GraphRAG Automated Risk & Compliance</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #090d16; color: #f8fafc; }
+    code, pre { font-family: 'JetBrains Mono', monospace; }
+    .glass-panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; }
+
+    /* Custom Markdown Typography Styles */
+    .prose-custom h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+      padding-bottom: 0.35rem;
+    }
+    .prose-custom h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #c084fc;
+      margin-top: 0.85rem;
+      margin-bottom: 0.4rem;
+    }
+    .prose-custom p {
+      margin-bottom: 0.75rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+    }
+    .prose-custom ul {
+      margin-top: 0.5rem;
+      margin-bottom: 0.85rem;
+      padding-left: 1.4rem;
+      list-style-type: disc !important;
+    }
+    .prose-custom ol {
+      margin-top: 0.5rem;
+      margin-bottom: 0.85rem;
+      padding-left: 1.4rem;
+      list-style-type: decimal !important;
+    }
+    .prose-custom li {
+      margin-bottom: 0.4rem;
+      line-height: 1.5;
+      color: #cbd5e1;
+    }
+    .prose-custom strong {
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+    /* Custom Inline XAI Hyperlinks */
+    .prose-custom a[href^="#trace-"] {
+      color: #fef08a !important;
+      background: rgba(217, 119, 6, 0.25);
+      border: 1px solid rgba(245, 158, 11, 0.6);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 6px;
+      text-decoration: none !important;
+      display: inline-flex;
+      align-items: center;
+      margin-left: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease-in-out;
+    }
+    .prose-custom a[href^="#trace-"]:hover {
+      background: rgba(245, 158, 11, 0.5);
+      color: #ffffff !important;
+      border-color: #fef08a;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+      transform: translateY(-1px);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function GraphVisualizer({ graphData, onNodeSelect, highlightControlId }) {
+      const containerRef = useRef(null);
+      const cyRef = useRef(null);
+
+      useEffect(() => {
+        if (!containerRef.current) return;
+        const elements = [];
+        if (graphData?.nodes) {
+          graphData.nodes.forEach(n => elements.push({ group: 'nodes', data: n.data }));
+        }
+        if (graphData?.edges) {
+          graphData.edges.forEach(e => elements.push({ group: 'edges', data: e.data }));
+        }
+
+        const cy = cytoscape({
+          container: containerRef.current,
+          elements: elements,
+          style: [
+            {
+              selector: 'node',
+              style: {
+                'label': 'data(label)',
+                'background-color': '#1e293b',
+                'border-width': 2,
+                'border-color': '#06b6d4',
+                'color': '#f8fafc',
+                'font-size': '11px',
+                'font-family': 'Inter, sans-serif',
+                'font-weight': 500,
+                'text-valign': 'bottom',
+                'text-margin-y': 6,
+                'text-wrap': 'wrap',
+                'text-max-width': '120px',
+                'text-background-color': '#090d16',
+                'text-background-opacity': 0.85,
+                'text-background-padding': '3px',
+                'text-background-shape': 'roundrectangle',
+                'width': 36,
+                'height': 36,
+                'transition-property': 'background-color, border-color, border-width, width, height',
+                'transition-duration': '0.3s'
+              }
+            },
+            {
+              selector: 'node[type = "query"]',
+              style: {
+                'background-color': '#047857',
+                'border-color': '#34d399',
+                'width': 52,
+                'height': 52,
+                'font-weight': 'bold',
+                'color': '#34d399'
+              }
+            },
+            {
+              selector: 'node[type = "family"]',
+              style: {
+                'background-color': '#581c87',
+                'border-color': '#c084fc',
+                'width': 46,
+                'height': 46,
+                'color': '#e9d5ff'
+              }
+            },
+            {
+              selector: 'node[type = "control"]',
+              style: {
+                'background-color': '#0369a1',
+                'border-color': '#38bdf8',
+                'width': 42,
+                'height': 42,
+                'color': '#bae6fd'
+              }
+            },
+            {
+              selector: 'node[type = "objective"]',
+              style: {
+                'background-color': '#78350f',
+                'border-color': '#fbbf24',
+                'width': 32,
+                'height': 32,
+                'color': '#fef08a'
+              }
+            },
+            {
+              selector: 'node[type = "storage"]',
+              style: {
+                'background-color': '#9a3412',
+                'border-color': '#fb923c',
+                'width': 40,
+                'height': 40
+              }
+            },
+            {
+              selector: 'node[type = "firewall"]',
+              style: {
+                'background-color': '#9f1239',
+                'border-color': '#f43f5e',
+                'width': 40,
+                'height': 40
+              }
+            },
+            {
+              selector: 'edge',
+              style: {
+                'width': 2,
+                'line-color': '#334155',
+                'target-arrow-color': '#38bdf8',
+                'target-arrow-shape': 'triangle',
+                'arrow-scale': 1.2,
+                'curve-style': 'bezier',
+                'label': 'data(label)',
+                'color': '#94a3b8',
+                'font-size': '9px',
+                'font-family': 'Inter, sans-serif',
+                'text-background-color': '#090d16',
+                'text-background-opacity': 0.9,
+                'text-background-padding': '2px',
+                'text-rotation': 'autorotate'
+              }
+            },
+            {
+              selector: 'node.highlighted',
+              style: {
+                'background-color': '#d97706',
+                'border-color': '#fef08a',
+                'border-width': 4,
+                'width': 54,
+                'height': 54,
+                'color': '#fef08a',
+                'font-weight': 'bold',
+                'z-index': 999
+              }
+            },
+            {
+              selector: 'edge.highlighted',
+              style: {
+                'line-color': '#f59e0b',
+                'target-arrow-color': '#f59e0b',
+                'width': 4,
+                'z-index': 999
+              }
+            }
+          ],
+          layout: {
+            name: 'breadthfirst',
+            directed: true,
+            padding: 35,
+            spacingFactor: 1.7,
+            avoidOverlap: true,
+            nodeDimensionsIncludeLabels: true
+          }
+        });
+
+        cy.on('tap', 'node', (evt) => {
+          const nodeData = evt.target.data();
+          if (onNodeSelect) onNodeSelect(nodeData);
+
+          // Tap animation & focus
+          cy.animate({
+            center: { eles: evt.target },
+            zoom: 1.3,
+            duration: 350
+          });
+        });
+
+        cyRef.current = cy;
+        return () => cy.destroy();
+      }, [graphData]);
+
+      useEffect(() => {
+        if (!cyRef.current || !highlightControlId) return;
+        const cy = cyRef.current;
+
+        cy.nodes().removeClass('highlighted');
+        cy.edges().removeClass('highlighted');
+
+        const targetId = `Ctrl_${highlightControlId}`;
+        const ctrlNode = cy.getElementById(targetId);
+
+        if (ctrlNode && ctrlNode.length > 0) {
+          const neighborhood = ctrlNode.closedNeighborhood();
+          neighborhood.addClass('highlighted');
+
+          if (onNodeSelect) {
+            onNodeSelect(ctrlNode.data());
+          }
+
+          cy.animate({
+            fit: { eles: neighborhood, padding: 60 },
+            duration: 450
+          });
+        }
+      }, [highlightControlId]);
+
+      return (
+        <div className="w-full h-full min-h-[360px] relative rounded-lg bg-slate-950 border border-slate-800 overflow-hidden">
+          <div ref={containerRef} className="w-full h-full min-h-[360px]" />
+          {highlightControlId && (
+            <div className="absolute top-3 right-3 bg-amber-950/90 text-amber-300 border border-amber-700 text-xs px-3 py-1.5 rounded-md font-mono animate-pulse">
+              🔍 Focused Path: Control {highlightControlId}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const [tab, setTab] = useState('engine1');
+      const [query, setQuery] = useState('');
+      const [messages, setMessages] = useState([
+        { sender: 'bot', text: 'Welcome to **GaRC Engine 1 (GraphRAG Compliance Assistant)**!\n\nAsk me how to protect CUI, enforce MFA, or configure firewalls under NIST SP 800-171 Rev 3.' }
+      ]);
+      const [activeGraph, setActiveGraph] = useState(null);
+      const [selectedNode, setSelectedNode] = useState(null);
+      const [highlightedControlId, setHighlightedControlId] = useState(null);
+      const [topoText, setTopoText] = useState('We have 10 Windows 11 PCs on 192.168.1.0/24 connected to a Synology NAS storing payroll contracts and CUI.');
+      const [topoResult, setTopoResult] = useState(null);
+      const [scorecard, setScorecard] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [commitMsg, setCommitMsg] = useState('');
+
+      useEffect(() => {
+        fetchScorecard();
+      }, []);
+
+      const fetchScorecard = async () => {
+        try {
+          const r = await fetch('/api/nist-scorecard');
+          const d = await r.json();
+          setScorecard(d);
+        } catch (e) {}
+      };
+
+      const handleAsk = async (e) => {
+        e.preventDefault();
+        if (!query.trim() || loading) return;
+        const q = query;
+        setQuery('');
+        setMessages(prev => [...prev, { sender: 'user', text: q }]);
+        setLoading(true);
+
+        try {
+          const res = await fetch('/api/engine1/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q })
+          });
+          const data = await res.json();
+          setMessages(prev => [...prev, { sender: 'bot', text: data.markdown_response, graph: data.graph, cited: data.cited_controls }]);
+          if (data.graph) setActiveGraph(data.graph);
+        } catch (err) {
+          setMessages(prev => [...prev, { sender: 'bot', text: '⚠️ Error reaching Engine 1 API.' }]);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleChatClick = (e, msgGraph) => {
+        const link = e.target.closest('a[href^="#trace-"]');
+        if (link) {
+          e.preventDefault();
+          const href = link.getAttribute('href');
+          const ctrlId = href.replace('#trace-', '');
+          if (msgGraph) setActiveGraph(msgGraph);
+          setHighlightedControlId(ctrlId);
+        }
+      };
+
+      const handleParseTopo = async () => {
+        if (!topoText.trim() || loading) return;
+        setLoading(true);
+        setCommitMsg('');
+        try {
+          const res = await fetch('/api/engine2/parse-topology', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: topoText })
+          });
+          const data = await res.json();
+          setTopoResult(data);
+          fetchScorecard();
+        } catch (err) {
+          alert('Error parsing topology.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleCommitTopo = async () => {
+        if (!topoResult) return;
+        setLoading(true);
+        try {
+          const res = await fetch('/api/engine2/commit-topology', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nodes: topoResult.nodes, edges: topoResult.edges })
+          });
+          const data = await res.json();
+          setCommitMsg('✅ Topology successfully persisted to Neo4j database!');
+          fetchScorecard();
+        } catch (err) {
+          setCommitMsg('❌ Error committing topology.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const seedKG = async () => {
+        try {
+          const res = await fetch('/api/seed', { method: 'POST' });
+          const data = await res.json();
+          alert(`NIST 800-171 Rev 3 CPRT Graph Loaded! Total Controls: ${data.count}`);
+        } catch (e) {
+          alert('Error seeding KG.');
+        }
+      };
+
+      return (
+        <div className="min-h-screen p-6 max-w-[1500px] mx-auto space-y-6">
+          {/* Header */}
+          <header className="glass-panel p-5 flex items-center justify-between">
+            <div>
+              <div className="flex items-center space-x-2">
+                <h1 className="text-2xl font-bold text-cyan-400">GaRC</h1>
+                <span className="text-xs px-2.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800">
+                  OUPI Cyber Clinic 2026
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">GraphRAG XAI Compliance Engine preloaded with NIST SP 800-171 Rev 3 CPRT</p>
+            </div>
+            <div className="flex items-center space-x-3 text-xs">
+              <span className="px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-cyan-300 font-mono">
+                OpenRouter Provider
+              </span>
+              <button
+                onClick={seedKG}
+                className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
+              >
+                Reload CPRT Seed KG
+              </button>
+            </div>
+          </header>
+
+          {/* Navigation Tabs */}
+          <div className="flex space-x-2 border-b border-slate-800 pb-2">
+            <button
+              onClick={() => setTab('engine1')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'engine1' ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/50' : 'text-slate-400'}`}
+            >
+              Engine 1: XAI GraphRAG Chat
+            </button>
+            <button
+              onClick={() => setTab('engine2')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'engine2' ? 'bg-purple-600/30 text-purple-300 border border-purple-500/50' : 'text-slate-400'}`}
+            >
+              Engine 2: NL Topology & Clarifications
+            </button>
+            <button
+              onClick={() => setTab('scorecard')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'scorecard' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/50' : 'text-slate-400'}`}
+            >
+              NIST 800-171 Gap Scorecard
+            </button>
+          </div>
+
+          {/* Tab 1: Engine 1 Chat */}
+          {tab === 'engine1' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[760px]">
+              <div className="lg:col-span-7 glass-panel p-4 flex flex-col h-full">
+                <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                  {messages.map((m, i) => (
+                    <div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        onClick={(e) => handleChatClick(e, m.graph)}
+                        className={`max-w-[88%] p-4 rounded-xl text-sm ${m.sender === 'user' ? 'bg-cyan-600 text-white' : 'bg-slate-900/90 border border-slate-800 text-slate-200'}`}
+                      >
+                        <div
+                          className="prose-custom"
+                          dangerouslySetInnerHTML={{ __html: marked.parse(m.text) }}
+                        />
+                        {m.cited?.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-slate-800 flex flex-wrap gap-2 items-center text-xs">
+                            <span className="text-slate-400 font-medium">Interactive XAI Traces:</span>
+                            {m.cited.map((ctrlId, cIdx) => (
+                              <button
+                                key={cIdx}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (m.graph) setActiveGraph(m.graph);
+                                  setHighlightedControlId(ctrlId);
+                                }}
+                                className="px-2.5 py-1 rounded bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-700/80 transition flex items-center space-x-1 font-mono"
+                              >
+                                <span>🔍 Trace {ctrlId}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {loading && <div className="text-xs text-cyan-400 animate-pulse">Traversing Knowledge Graph & generating XAI trace...</div>}
+                </div>
+                <form onSubmit={handleAsk} className="pt-3 flex space-x-2">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    placeholder="e.g. How do I protect CUI stored on NAS under NIST 800-171?"
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-cyan-500"
+                  />
+                  <button type="submit" disabled={loading} className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium">
+                    Ask
+                  </button>
+                </form>
+              </div>
+
+              {/* Visualizer Column with Interactive Expanded Node Card */}
+              <div className="lg:col-span-5 glass-panel p-4 flex flex-col h-full space-y-3">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-semibold text-slate-200">Live Multi-Hop Graph Reasoning Path</h3>
+                  {highlightedControlId && (
+                    <button
+                      onClick={() => setHighlightedControlId(null)}
+                      className="text-xs text-slate-400 hover:text-slate-200"
+                    >
+                      Reset Focus
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <GraphVisualizer
+                    graphData={activeGraph || messages[messages.length - 1]?.graph}
+                    onNodeSelect={setSelectedNode}
+                    highlightControlId={highlightedControlId}
+                  />
+                </div>
+
+                {/* Expanded Interactive Node Card Modal/Drawer */}
+                {selectedNode ? (
+                  <div className="p-4 rounded-xl bg-slate-900 border border-cyan-500/60 shadow-xl space-y-2 text-xs animate-in fade-in slide-in-from-bottom-2">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-mono text-cyan-300 font-bold text-sm">{selectedNode.label}</span>
+                        <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] uppercase font-mono">
+                          {selectedNode.type}
+                        </span>
+                      </div>
+                      <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white text-xs">
+                        ✕ Close
+                      </button>
+                    </div>
+
+                    {selectedNode.description && (
+                      <div className="text-slate-200 leading-relaxed pt-1">
+                        <strong>Description:</strong> {selectedNode.description}
+                      </div>
+                    )}
+
+                    {selectedNode.detail && (
+                      <div className="text-slate-300 italic pt-1">
+                        "{selectedNode.detail}"
+                      </div>
+                    )}
+
+                    {selectedNode.guidance && (
+                      <div className="p-2.5 rounded bg-cyan-950/50 border border-cyan-800/80 text-cyan-200 mt-2">
+                        <strong className="text-cyan-400">Small Business Action:</strong> {selectedNode.guidance}
+                      </div>
+                    )}
+
+                    {selectedNode.details && (
+                      <div className="text-slate-400 font-mono text-[11px] pt-1">
+                        {selectedNode.details}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-center text-xs text-slate-500">
+                    💡 Click on any graph node to expand its full description, objectives, and small business guidance.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 2: Engine 2 Topology */}
+          {tab === 'engine2' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[720px]">
+              <div className="lg:col-span-6 glass-panel p-4 flex flex-col h-full space-y-4">
+                <h3 className="text-sm font-semibold text-purple-300">Natural Language Network Topology Input</h3>
+                <textarea
+                  rows={4}
+                  value={topoText}
+                  onChange={e => setTopoText(e.target.value)}
+                  placeholder="e.g., We have 10 Windows PCs on 192.168.1.0/24 connected to a Synology NAS storing payroll and CUI..."
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-3 text-sm outline-none focus:border-purple-500"
+                />
+                <button
+                  onClick={handleParseTopo}
+                  disabled={loading}
+                  className="py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                >
+                  {loading ? 'Translating to Graph Topology...' : 'Generate Rigid Topology Draft'}
+                </button>
+
+                {topoResult && (
+                  <div className="flex-1 overflow-y-auto space-y-3 pt-3 border-t border-slate-800 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold text-slate-300">Extracted Graph Entities ({topoResult.nodes.length} Nodes)</span>
+                      <span className="font-mono text-purple-400">Confidence: {(topoResult.confidence_score*100).toFixed(0)}%</span>
+                    </div>
+
+                    {/* Clarification Cards */}
+                    {topoResult.clarification_prompts?.length > 0 && (
+                      <div className="p-3 rounded bg-amber-950/40 border border-amber-800/60 space-y-2">
+                        <div className="text-amber-400 font-medium">Clarification Required:</div>
+                        {topoResult.clarification_prompts.map((cp, idx) => (
+                          <div key={idx} className="p-2 rounded bg-slate-900 border border-slate-800">
+                            <div>{cp.question}</div>
+                            <div className="flex gap-2 mt-1">
+                              {cp.suggested_options.map((opt, oIdx) => (
+                                <button
+                                  key={oIdx}
+                                  onClick={() => {
+                                    const updatedNodes = topoResult.nodes.map(n => n.id === cp.node_id ? { ...n, [cp.property_in_question]: opt.toLowerCase().includes('yes'), confidence: 1.0 } : n);
+                                    const updatedPrompts = topoResult.clarification_prompts.filter(p => p.node_id !== cp.node_id);
+                                    setTopoResult(prev => ({ ...prev, nodes: updatedNodes, clarification_prompts: updatedPrompts }));
+                                    fetchScorecard();
+                                  }}
+                                  className="px-2 py-1 rounded bg-slate-800 hover:bg-amber-900 text-amber-200"
+                                >
+                                  {opt}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {topoResult.nodes?.map((n, i) => (
+                      <div key={i} className="p-2.5 rounded bg-slate-900 border border-slate-800 flex justify-between items-center">
+                        <div>
+                          <span className="font-mono text-purple-300">{n.name}</span>
+                          <span className="ml-2 text-[10px] uppercase text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">{n.type}</span>
+                        </div>
+                        <div className="flex gap-1">
+                          {n.stores_cui && <span className="px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 text-[10px]">CUI</span>}
+                          {n.has_firewall_or_mfa && <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px]">Secured</span>}
+                        </div>
+                      </div>
+                    ))}
+
+                    <button
+                      onClick={handleCommitTopo}
+                      disabled={loading}
+                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium text-white"
+                    >
+                      Persist Approved Topology to Neo4j Database
+                    </button>
+                    {commitMsg && <div className="text-center text-emerald-400">{commitMsg}</div>}
+                  </div>
+                )}
+              </div>
+
+              <div className="lg:col-span-6 glass-panel p-4 flex flex-col h-full">
+                <h3 className="text-sm font-semibold mb-3 text-slate-200">Generated Network Graph Canvas</h3>
+                <div className="flex-1">
+                  <GraphVisualizer graphData={topoResult?.cytoscape_graph || { nodes: [], edges: [] }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab 3: Gap Scorecard */}
+          {tab === 'scorecard' && scorecard && (
+            <div className="space-y-6">
+              {scorecard.status === 'Unassessed' ? (
+                <div className="glass-panel p-8 text-center space-y-3">
+                  <div className="text-amber-400 text-lg font-semibold">⚠️ Topology Unassessed</div>
+                  <p className="text-sm text-slate-400 max-w-xl mx-auto">{scorecard.message}</p>
+                  <button onClick={() => setTab('engine2')} className="px-5 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium text-white">
+                    Go to Engine 2 to input Network Setup
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="glass-panel p-4">
+                      <span className="text-xs text-slate-400">Compliance Readiness</span>
+                      <div className="text-3xl font-bold text-cyan-400">{scorecard.compliance_score_pct}%</div>
+                    </div>
+                    <div className="glass-panel p-4">
+                      <span className="text-xs text-slate-400">Implemented Controls</span>
+                      <div className="text-3xl font-bold text-emerald-400">{scorecard.implemented_controls}</div>
+                    </div>
+                    <div className="glass-panel p-4">
+                      <span className="text-xs text-slate-400">Partial Controls</span>
+                      <div className="text-3xl font-bold text-amber-400">{scorecard.partial_controls}</div>
+                    </div>
+                    <div className="glass-panel p-4">
+                      <span className="text-xs text-slate-400">Critical Gaps</span>
+                      <div className="text-3xl font-bold text-rose-400">{scorecard.gap_controls}</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel p-6 space-y-3">
+                    <h3 className="font-semibold text-sm text-slate-200">Live Control Family Progress ({scorecard.active_node_count} Active Topology Nodes Evaluated)</h3>
+                    {scorecard.family_scores?.map((f, i) => (
+                      <div key={i} className="p-3 rounded bg-slate-900 border border-slate-800 flex justify-between items-center text-xs">
+                        <span className="text-slate-200 font-medium">{f.family}</span>
+                        <span className={`px-3 py-1 rounded-full font-mono border ${f.status === 'Good' ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-rose-950 text-rose-300 border-rose-800'}`}>
+                          {f.score}% ({f.status})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+# Environment variables & secrets
+.env
+*.env
+*.env.local
+
+# Python Virtual Environments
+venv/
+backend/venv/
+ENV/
+env/
+
+# Python Bytecode & Caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js / Frontend dependencies & builds
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+build/
+.output/
+
+# Neo4j Database Volumes
+neo4j_data/
+neo4j_logs/
+
+# IDE / OS specific files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
