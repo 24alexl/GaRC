@@ -106,6 +106,8 @@
           graphData.edges.forEach(e => elements.push({ group: 'edges', data: e.data }));
         }
 
+        const isGraphRAG = graphData?.nodes?.some(n => n.data.type === 'query');
+
         const cy = cytoscape({
           container: containerRef.current,
           elements: elements,
@@ -236,14 +238,28 @@
               }
             }
           ],
-          layout: {
+          layout: isGraphRAG ? {
             name: 'breadthfirst',
             directed: true,
-            padding: 35,
-            spacingFactor: 1.7,
+            padding: 40,
+            spacingFactor: 1.3, // Tighter horizontal spacing for GraphRAG multi-hop traces
             avoidOverlap: true,
-            nodeDimensionsIncludeLabels: true
+            nodeDimensionsIncludeLabels: true,
+            roots: 'node[type = "query"]'
+          } : {
+            name: 'breadthfirst',
+            directed: true,
+            padding: 40,
+            spacingFactor: 1.8, // Wider spacing for dense network topologies
+            avoidOverlap: true,
+            nodeDimensionsIncludeLabels: true,
+            roots: 'node[type = "cloud_service"], node[type = "firewall"], node[type = "subnet"]'
           }
+        });
+
+        cy.ready(() => {
+          cy.resize();
+          cy.fit(35);
         });
 
         cy.on('tap', 'node', (evt) => {
@@ -259,7 +275,18 @@
         });
 
         cyRef.current = cy;
-        return () => cy.destroy();
+
+        const observer = new ResizeObserver(() => {
+          if (cyRef.current) {
+            cyRef.current.resize();
+          }
+        });
+        if (containerRef.current) observer.observe(containerRef.current);
+
+        return () => {
+          observer.disconnect();
+          cy.destroy();
+        };
       }, [graphData]);
 
       useEffect(() => {
@@ -288,8 +315,8 @@
       }, [highlightControlId]);
 
       return (
-        <div className="w-full h-full min-h-[360px] relative rounded-lg bg-slate-950 border border-slate-800 overflow-hidden">
-          <div ref={containerRef} className="w-full h-full min-h-[360px]" />
+        <div className="w-full h-[310px] relative rounded-lg bg-slate-950 border border-slate-800 overflow-hidden">
+          <div ref={containerRef} className="w-full h-full" />
           {highlightControlId && (
             <div className="absolute top-3 right-3 bg-amber-950/90 text-amber-300 border border-amber-700 text-xs px-3 py-1.5 rounded-md font-mono animate-pulse">
               🔍 Focused Path: Control {highlightControlId}
@@ -300,10 +327,11 @@
     }
 
     function App() {
+      const [viewMode, setViewMode] = useState('welcome'); // 'welcome' or 'app'
       const [tab, setTab] = useState('engine1');
       const [query, setQuery] = useState('');
       const [messages, setMessages] = useState([
-        { sender: 'bot', text: 'Welcome to **GaRC Engine 1 (GraphRAG Compliance Assistant)**!\n\nAsk me how to protect CUI, enforce MFA, or configure firewalls under NIST SP 800-171 Rev 3.' }
+        { sender: 'bot', text: 'Welcome to **GaRC (GraphRAG Compliance Assistant)**!\n\nAsk me how to protect CUI, audit your network topology, or enforce NIST SP 800-171 Rev 3 controls.' }
       ]);
       const [activeGraph, setActiveGraph] = useState(null);
       const [selectedNode, setSelectedNode] = useState(null);
@@ -312,7 +340,40 @@
       const [topoResult, setTopoResult] = useState(null);
       const [scorecard, setScorecard] = useState(null);
       const [loading, setLoading] = useState(false);
+      const [topoStep, setTopoStep] = useState('');
       const [commitMsg, setCommitMsg] = useState('');
+      const [leftWidth, setLeftWidth] = useState(55);
+      const isDraggingRef = useRef(false);
+
+      const handleMouseDown = (e) => {
+        isDraggingRef.current = true;
+        document.body.style.userSelect = 'none';
+      };
+
+      useEffect(() => {
+        const handleMouseMove = (e) => {
+          if (!isDraggingRef.current) return;
+          const container = document.getElementById('split-container');
+          if (!container) return;
+          const rect = container.getBoundingClientRect();
+          const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
+          if (newWidth >= 25 && newWidth <= 75) {
+            setLeftWidth(newWidth);
+          }
+        };
+
+        const handleMouseUp = () => {
+          isDraggingRef.current = false;
+          document.body.style.userSelect = '';
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+          window.removeEventListener('mousemove', handleMouseMove);
+          window.removeEventListener('mouseup', handleMouseUp);
+        };
+      }, []);
 
       useEffect(() => {
         fetchScorecard();
@@ -364,13 +425,21 @@
       const handleParseTopo = async () => {
         if (!topoText.trim() || loading) return;
         setLoading(true);
-        setCommitMsg('');
+        setTopoStep('⚡ Extracting network entities & subnets...');
+        
+        // Artificial delay for smooth UX progress banner (Engine 2 is so fast it finishes in 10ms!)
+        await new Promise(r => setTimeout(r, 450));
+        
         try {
           const res = await fetch('/api/engine2/parse-topology', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: topoText })
           });
+          
+          setTopoStep('🛡️ Evaluating MFA & CUI security attributes...');
+          await new Promise(r => setTimeout(r, 450));
+          
           const data = await res.json();
           setTopoResult(data);
           fetchScorecard();
@@ -378,6 +447,7 @@
           alert('Error parsing topology.');
         } finally {
           setLoading(false);
+          setTopoStep('');
         }
       };
 
@@ -414,54 +484,155 @@
         <div className="min-h-screen p-6 max-w-[1500px] mx-auto space-y-6">
           {/* Header */}
           <header className="glass-panel p-5 flex items-center justify-between">
-            <div>
-              <div className="flex items-center space-x-2">
-                <h1 className="text-2xl font-bold text-cyan-400">GaRC</h1>
-                <span className="text-xs px-2.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800">
-                  OUPI Cyber Clinic 2026
-                </span>
+            <div className="flex items-center space-x-4">
+              {viewMode === 'app' && (
+                <button
+                  onClick={() => setViewMode('welcome')}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs transition"
+                >
+                  ← Home
+                </button>
+              )}
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h1 className="text-2xl font-bold text-cyan-400">GaRC</h1>
+                  <span className="text-xs px-2.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-mono">
+                    CPRT Compliance Platform
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">GraphRAG Compliance Reasoning & Topology Mapping for NIST SP 800-171 Rev 3</p>
               </div>
-              <p className="text-xs text-slate-400">GraphRAG XAI Compliance Engine preloaded with NIST SP 800-171 Rev 3 CPRT</p>
             </div>
+
             <div className="flex items-center space-x-3 text-xs">
-              <span className="px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-cyan-300 font-mono">
-                OpenRouter Provider
-              </span>
+              {topoResult?.nodes?.length > 0 ? (
+                <button
+                  onClick={() => { setViewMode('app'); setTab('engine2'); }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-700 text-emerald-300 font-mono flex items-center space-x-1.5 hover:bg-emerald-900 transition"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span>Active Topology: {topoResult.nodes.length} Devices</span>
+                </button>
+              ) : (
+                <span className="px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-slate-400 font-mono">
+                  Topology: Unmapped
+                </span>
+              )}
               <button
                 onClick={seedKG}
                 className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
               >
-                Reload CPRT Seed KG
+                Reload Seed KG
               </button>
             </div>
           </header>
 
-          {/* Navigation Tabs */}
-          <div className="flex space-x-2 border-b border-slate-800 pb-2">
-            <button
-              onClick={() => setTab('engine1')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'engine1' ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/50' : 'text-slate-400'}`}
-            >
-              Engine 1: XAI GraphRAG Chat
-            </button>
-            <button
-              onClick={() => setTab('engine2')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'engine2' ? 'bg-purple-600/30 text-purple-300 border border-purple-500/50' : 'text-slate-400'}`}
-            >
-              Engine 2: NL Topology & Clarifications
-            </button>
-            <button
-              onClick={() => setTab('scorecard')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === 'scorecard' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/50' : 'text-slate-400'}`}
-            >
-              NIST 800-171 Gap Scorecard
-            </button>
-          </div>
+          {/* Welcome / Mode Selection Landing Screen */}
+          {viewMode === 'welcome' && (
+            <div className="py-8 space-y-8 max-w-4xl mx-auto">
+              <div className="text-center space-y-3">
+                <h2 className="text-3xl font-extrabold text-slate-100">Welcome to GaRC Compliance Platform</h2>
+                <p className="text-slate-400 max-w-xl mx-auto text-sm leading-relaxed">
+                  Select how you would like to begin evaluating your organization's cybersecurity compliance under NIST SP 800-171 Rev 3:
+                </p>
+              </div>
 
-          {/* Tab 1: Engine 1 Chat */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+                {/* Option 1: Map Network Topology First */}
+                <div
+                  onClick={() => { setViewMode('app'); setTab('engine2'); }}
+                  className="glass-panel p-6 rounded-2xl border-2 border-purple-500/40 hover:border-purple-500 bg-slate-900/80 hover:bg-slate-900 transition cursor-pointer flex flex-col justify-between space-y-6 group shadow-lg hover:shadow-purple-500/10"
+                >
+                  <div className="space-y-3">
+                    <div className="w-12 h-12 rounded-xl bg-purple-950 border border-purple-800 text-purple-300 flex items-center justify-center text-2xl">
+                      🗺️
+                    </div>
+                    <div className="inline-block px-2.5 py-0.5 rounded bg-purple-950 text-purple-300 text-[11px] font-medium border border-purple-800/80">
+                      Recommended First Step
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-100 group-hover:text-purple-300 transition">
+                      Map Network Topology First
+                    </h3>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Describe your PCs, NAS storage, VPNs, subnets, and CUI assets in plain text. GaRC will extract your network nodes, security flags (MFA, encryption), and automatically map them to NIST controls.
+                    </p>
+                  </div>
+                  <button className="w-full py-2.5 rounded-xl bg-purple-600 group-hover:bg-purple-500 text-white font-medium text-xs transition flex items-center justify-center space-x-2">
+                    <span>Map Topology & Audit Setup</span>
+                    <span>→</span>
+                  </button>
+                </div>
+
+                {/* Option 2: Direct GraphRAG Chat */}
+                <div
+                  onClick={() => { setViewMode('app'); setTab('engine1'); }}
+                  className="glass-panel p-6 rounded-2xl border border-slate-800 hover:border-cyan-500/50 bg-slate-900/60 hover:bg-slate-900 transition cursor-pointer flex flex-col justify-between space-y-6 group"
+                >
+                  <div className="space-y-3">
+                    <div className="w-12 h-12 rounded-xl bg-cyan-950 border border-cyan-800 text-cyan-300 flex items-center justify-center text-2xl">
+                      💬
+                    </div>
+                    <div className="inline-block px-2.5 py-0.5 rounded bg-cyan-950 text-cyan-300 text-[11px] font-medium border border-cyan-800/80">
+                      Direct Assistant Access
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-100 group-hover:text-cyan-300 transition">
+                      Skip to Compliance Assistant
+                    </h3>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Ask direct NIST SP 800-171 Rev 3 compliance questions, query specific controls, or audit default setups directly with the GraphRAG reasoning engine.
+                    </p>
+                  </div>
+                  <button className="w-full py-2.5 rounded-xl bg-slate-800 group-hover:bg-cyan-600 text-slate-200 group-hover:text-white font-medium text-xs transition flex items-center justify-center space-x-2">
+                    <span>Open Compliance Assistant</span>
+                    <span>→</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Application Views */}
+          {viewMode === 'app' && (
+            <>
+              {/* Workflow Stepper Navigation Tabs */}
+              <div className="flex items-center space-x-2 border-b border-slate-800 pb-3 overflow-x-auto text-sm font-medium">
+                {/* Step 1: Network Topology */}
+                <button
+                  onClick={() => setTab('engine2')}
+                  className={`px-4 py-2 rounded-xl flex items-center space-x-2 transition ${tab === 'engine2' ? 'bg-purple-600/30 text-purple-300 border border-purple-500/60 shadow-lg shadow-purple-500/10' : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'}`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-purple-950 text-purple-300 border border-purple-800 text-xs flex items-center justify-center font-bold font-mono">1</span>
+                  <span>🗺️ Network Topology</span>
+                </button>
+
+                <span className="text-slate-600 font-bold px-1">→</span>
+
+                {/* Step 2: Compliance Assistant */}
+                <button
+                  onClick={() => setTab('engine1')}
+                  className={`px-4 py-2 rounded-xl flex items-center space-x-2 transition ${tab === 'engine1' ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/60 shadow-lg shadow-cyan-500/10' : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'}`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 text-xs flex items-center justify-center font-bold font-mono">2</span>
+                  <span>💬 Compliance Assistant (GraphRAG)</span>
+                </button>
+
+                <span className="text-slate-600 font-bold px-1">→</span>
+
+                {/* Step 3: Gap Scorecard */}
+                <button
+                  onClick={() => setTab('scorecard')}
+                  className={`px-4 py-2 rounded-xl flex items-center space-x-2 transition ${tab === 'scorecard' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/60 shadow-lg shadow-emerald-500/10' : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'}`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs flex items-center justify-center font-bold font-mono">3</span>
+                  <span>📊 NIST 800-171 Gap Scorecard</span>
+                </button>
+              </div>
+
+          {/* Tab 1: Engine 1 Chat with Resizable Split Pane Handle */}
           {tab === 'engine1' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[760px]">
-              <div className="lg:col-span-7 glass-panel p-4 flex flex-col h-full">
+            <div id="split-container" className="flex flex-col lg:flex-row gap-3 h-[760px] relative">
+              {/* Left Chat Column */}
+              <div style={{ width: `${leftWidth}%` }} className="glass-panel p-4 flex flex-col h-full shrink-0 min-w-[280px]">
                 <div className="flex-1 overflow-y-auto space-y-4 pr-2">
                   {messages.map((m, i) => (
                     <div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -510,9 +681,18 @@
                 </form>
               </div>
 
-              {/* Visualizer Column with Interactive Expanded Node Card */}
-              <div className="lg:col-span-5 glass-panel p-4 flex flex-col h-full space-y-3">
-                <div className="flex justify-between items-center">
+              {/* Draggable Resizer Handle */}
+              <div
+                onMouseDown={handleMouseDown}
+                className="hidden lg:flex w-2.5 hover:w-3.5 cursor-col-resize bg-slate-800/80 hover:bg-cyan-500 border border-slate-700/60 hover:border-cyan-400 rounded-full transition-all items-center justify-center shrink-0 my-2 shadow-lg group"
+                title="Drag left or right to customize Chat & Graph panel sizes"
+              >
+                <div className="w-1 h-8 bg-slate-500 group-hover:bg-white rounded-full transition-colors" />
+              </div>
+
+              {/* Right Visualizer Column with Ergonomic Compact Graph & Expanded Explanation Window */}
+              <div style={{ width: `${100 - leftWidth}%` }} className="glass-panel p-4 flex flex-col h-full space-y-3 shrink-0 min-w-[280px]">
+                <div className="flex justify-between items-center shrink-0">
                   <h3 className="text-sm font-semibold text-slate-200">Live Multi-Hop Graph Reasoning Path</h3>
                   {highlightedControlId && (
                     <button
@@ -523,7 +703,9 @@
                     </button>
                   )}
                 </div>
-                <div className="flex-1">
+
+                {/* Compact Graph Window */}
+                <div className="h-[310px] shrink-0">
                   <GraphVisualizer
                     graphData={activeGraph || messages[messages.length - 1]?.graph}
                     onNodeSelect={setSelectedNode}
@@ -531,50 +713,57 @@
                   />
                 </div>
 
-                {/* Expanded Interactive Node Card Modal/Drawer */}
-                {selectedNode ? (
-                  <div className="p-4 rounded-xl bg-slate-900 border border-cyan-500/60 shadow-xl space-y-2 text-xs animate-in fade-in slide-in-from-bottom-2">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-mono text-cyan-300 font-bold text-sm">{selectedNode.label}</span>
-                        <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] uppercase font-mono">
-                          {selectedNode.type}
-                        </span>
+                {/* Ergonomic Expanded Node Explanation Window */}
+                <div className="flex-1 overflow-y-auto min-h-[260px] pr-1">
+                  {selectedNode ? (
+                    <div className="p-4 rounded-xl bg-slate-900/90 border border-cyan-500/60 shadow-xl space-y-2.5 text-xs animate-in fade-in slide-in-from-bottom-2">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono text-cyan-300 font-bold text-sm">{selectedNode.label}</span>
+                          <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] uppercase font-mono">
+                            {selectedNode.type}
+                          </span>
+                        </div>
+                        <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-slate-800">
+                          ✕ Close
+                        </button>
                       </div>
-                      <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white text-xs">
-                        ✕ Close
-                      </button>
+
+                      {selectedNode.description && (
+                        <div className="text-slate-200 leading-relaxed pt-1">
+                          <strong className="text-cyan-400">Control Description:</strong>
+                          <p className="mt-1 text-slate-300 bg-slate-950/60 p-2.5 rounded border border-slate-800/80">{selectedNode.description}</p>
+                        </div>
+                      )}
+
+                      {selectedNode.detail && (
+                        <div className="text-slate-300 italic pt-1 bg-slate-950/40 p-2.5 rounded border border-slate-800/60">
+                          "{selectedNode.detail}"
+                        </div>
+                      )}
+
+                      {selectedNode.guidance && (
+                        <div className="p-3 rounded bg-cyan-950/50 border border-cyan-800/80 text-cyan-200 mt-2 space-y-1">
+                          <strong className="text-cyan-400 block font-semibold">Small Business Action:</strong>
+                          <p className="text-slate-200 leading-relaxed">{selectedNode.guidance}</p>
+                        </div>
+                      )}
+
+                      {selectedNode.details && (
+                        <div className="text-slate-400 font-mono text-[11px] pt-1 bg-slate-950 p-2 rounded border border-slate-800">
+                          {selectedNode.details}
+                        </div>
+                      )}
                     </div>
-
-                    {selectedNode.description && (
-                      <div className="text-slate-200 leading-relaxed pt-1">
-                        <strong>Description:</strong> {selectedNode.description}
+                  ) : (
+                    <div className="h-full flex items-center justify-center p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 text-center text-xs text-slate-400">
+                      <div>
+                        <div className="text-cyan-400 font-semibold mb-1 text-sm">🔍 Node Details & XAI Trace</div>
+                        <p className="max-w-xs text-slate-400">Click on any graph node or <span className="text-amber-300 font-mono">[Trace ID]</span> link to view its full description, objectives, and small business guidance here.</p>
                       </div>
-                    )}
-
-                    {selectedNode.detail && (
-                      <div className="text-slate-300 italic pt-1">
-                        "{selectedNode.detail}"
-                      </div>
-                    )}
-
-                    {selectedNode.guidance && (
-                      <div className="p-2.5 rounded bg-cyan-950/50 border border-cyan-800/80 text-cyan-200 mt-2">
-                        <strong className="text-cyan-400">Small Business Action:</strong> {selectedNode.guidance}
-                      </div>
-                    )}
-
-                    {selectedNode.details && (
-                      <div className="text-slate-400 font-mono text-[11px] pt-1">
-                        {selectedNode.details}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-center text-xs text-slate-500">
-                    💡 Click on any graph node to expand its full description, objectives, and small business guidance.
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -594,10 +783,17 @@
                 <button
                   onClick={handleParseTopo}
                   disabled={loading}
-                  className="py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+                  className="py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition flex items-center justify-center space-x-2"
                 >
-                  {loading ? 'Translating to Graph Topology...' : 'Generate Rigid Topology Draft'}
+                  <span>{loading ? 'Analyzing Network Topology...' : 'Generate Rigid Topology Draft'}</span>
                 </button>
+
+                {loading && topoStep && (
+                  <div className="p-3 rounded-lg bg-purple-950/70 border border-purple-800 text-purple-300 text-xs flex items-center space-x-2 animate-pulse">
+                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-ping shrink-0" />
+                    <span className="font-mono font-medium">{topoStep}</span>
+                  </div>
+                )}
 
                 {topoResult && (
                   <div className="flex-1 overflow-y-auto space-y-3 pt-3 border-t border-slate-800 text-xs">
@@ -714,6 +910,8 @@
                 </div>
               )}
             </div>
+          )}
+          </>
           )}
         </div>
       );

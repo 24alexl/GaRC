@@ -154,75 +154,81 @@ export default function Engine1Chat() {
       </div>
 
       {/* Right XAI Visualizer Column */}
-      <div className="lg:col-span-5 flex flex-col space-y-4 h-full">
-        <div className="glass-panel p-4 flex-1 flex flex-col">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-slate-200 flex items-center">
-              Live Multi-Hop Reasoning Path
-            </h3>
-            {highlightedControlId && (
-              <button
-                onClick={() => setHighlightedControlId(null)}
-                className="text-xs text-slate-400 hover:text-slate-200"
-              >
-                Reset Focus
-              </button>
-            )}
-          </div>
-
-          <div className="flex-1">
-            <GraphVisualizer
-              graphData={activeGraph || messages[messages.length - 1]?.graph}
-              onNodeSelect={setSelectedNode}
-              highlightControlId={highlightedControlId}
-            />
-          </div>
+      <div className="lg:col-span-5 glass-panel p-4 flex flex-col space-y-3 h-full">
+        <div className="flex items-center justify-between shrink-0">
+          <h3 className="text-sm font-semibold text-slate-200 flex items-center">
+            Live Multi-Hop Reasoning Path
+          </h3>
+          {highlightedControlId && (
+            <button
+              onClick={() => setHighlightedControlId(null)}
+              className="text-xs text-slate-400 hover:text-slate-200"
+            >
+              Reset Focus
+            </button>
+          )}
         </div>
 
-        {/* Selected Node Details Card */}
-        {selectedNode ? (
-          <div className="p-4 rounded-xl bg-slate-900 border border-cyan-500/60 shadow-xl space-y-2 text-xs animate-in fade-in slide-in-from-bottom-2">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div className="flex items-center space-x-2">
-                <span className="font-mono text-cyan-300 font-bold text-sm">{selectedNode.label}</span>
-                <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] uppercase font-mono">
-                  {selectedNode.type}
-                </span>
+        {/* Compact Graph Window */}
+        <div className="h-[310px] shrink-0">
+          <GraphVisualizer
+            graphData={activeGraph || messages[messages.length - 1]?.graph}
+            onNodeSelect={setSelectedNode}
+            highlightControlId={highlightedControlId}
+          />
+        </div>
+
+        {/* Ergonomic Expanded Node Explanation Window */}
+        <div className="flex-1 overflow-y-auto min-h-[260px] pr-1">
+          {selectedNode ? (
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-cyan-500/60 shadow-xl space-y-2.5 text-xs animate-in fade-in slide-in-from-bottom-2">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div className="flex items-center space-x-2">
+                  <span className="font-mono text-cyan-300 font-bold text-sm">{selectedNode.label}</span>
+                  <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] uppercase font-mono">
+                    {selectedNode.type}
+                  </span>
+                </div>
+                <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-slate-800">
+                  ✕ Close
+                </button>
               </div>
-              <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white text-xs">
-                ✕ Close
-              </button>
+
+              {selectedNode.description && (
+                <div className="text-slate-200 leading-relaxed pt-1">
+                  <strong className="text-cyan-400">Control Description:</strong>
+                  <p className="mt-1 text-slate-300 bg-slate-950/60 p-2.5 rounded border border-slate-800/80">{selectedNode.description}</p>
+                </div>
+              )}
+
+              {selectedNode.detail && (
+                <div className="text-slate-300 italic pt-1 bg-slate-950/40 p-2.5 rounded border border-slate-800/60">
+                  "{selectedNode.detail}"
+                </div>
+              )}
+
+              {selectedNode.guidance && (
+                <div className="p-3 rounded bg-cyan-950/50 border border-cyan-800/80 text-cyan-200 mt-2 space-y-1">
+                  <strong className="text-cyan-400 block font-semibold">Small Business Action:</strong>
+                  <p className="text-slate-200 leading-relaxed">{selectedNode.guidance}</p>
+                </div>
+              )}
+
+              {selectedNode.details && (
+                <div className="text-slate-400 font-mono text-[11px] pt-1 bg-slate-950 p-2 rounded border border-slate-800">
+                  {selectedNode.details}
+                </div>
+              )}
             </div>
-
-            {selectedNode.description && (
-              <div className="text-slate-200 leading-relaxed pt-1">
-                <strong>Description:</strong> {selectedNode.description}
+          ) : (
+            <div className="h-full flex items-center justify-center p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 text-center text-xs text-slate-400">
+              <div>
+                <div className="text-cyan-400 font-semibold mb-1 text-sm">🔍 Node Details & XAI Trace</div>
+                <p className="max-w-xs text-slate-400">Click on any graph node or <span className="text-amber-300 font-mono">[Trace ID]</span> link to view its full description, objectives, and small business guidance here.</p>
               </div>
-            )}
-
-            {selectedNode.detail && (
-              <div className="text-slate-300 italic pt-1">
-                "{selectedNode.detail}"
-              </div>
-            )}
-
-            {selectedNode.guidance && (
-              <div className="p-2.5 rounded bg-cyan-950/50 border border-cyan-800/80 text-cyan-200 mt-2">
-                <strong className="text-cyan-400">Small Business Action:</strong> {selectedNode.guidance}
-              </div>
-            )}
-
-            {selectedNode.details && (
-              <div className="text-slate-400 font-mono text-[11px] pt-1">
-                {selectedNode.details}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-center text-xs text-slate-500">
-            💡 Click on any graph node to expand its full description, objectives, and small business guidance.
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -14,12 +14,18 @@ export default function Engine2Topology() {
     "Small accounting office with 5 PCs on 192.168.1.0/24 connected to an unmanaged NETGEAR router with guest Wi-Fi enabled."
   ];
 
+  const [topoStep, setTopoStep] = useState('');
+
   const handleParse = async (textToParse) => {
     const targetText = textToParse || inputText;
     if (!targetText.trim() || loading) return;
 
     setLoading(true);
     setCommitStatus(null);
+    setTopoStep('⚡ Extracting network entities & subnets...');
+
+    // Artificial delay for smooth UX progress banner (Engine 2 is so fast it finishes in 10ms!)
+    await new Promise(r => setTimeout(r, 450));
 
     try {
       const res = await fetch('/api/engine2/parse-topology', {
@@ -27,12 +33,17 @@ export default function Engine2Topology() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: targetText })
       });
+      
+      setTopoStep('🛡️ Evaluating MFA & CUI security attributes...');
+      await new Promise(r => setTimeout(r, 450));
+      
       const data = await res.json();
       setParseResult(data);
     } catch (err) {
       alert('Error parsing network topology.');
     } finally {
       setLoading(false);
+      setTopoStep('');
     }
   };
 
@@ -125,9 +136,16 @@ export default function Engine2Topology() {
             disabled={loading || !inputText.trim()}
             className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition flex items-center justify-center space-x-2"
           >
-            <span>Generate Rigid Topology Draft</span>
-            <ArrowRight className="w-4 h-4" />
+            <span>{loading ? 'Analyzing Network Topology...' : 'Generate Rigid Topology Draft'}</span>
+            {!loading && <ArrowRight className="w-4 h-4" />}
           </button>
+          
+          {loading && topoStep && (
+            <div className="p-3 rounded-lg bg-purple-950/70 border border-purple-800 text-purple-300 text-xs flex items-center space-x-2 animate-pulse">
+              <div className="w-2 h-2 rounded-full bg-purple-400 animate-ping shrink-0" />
+              <span className="font-mono font-medium">{topoStep}</span>
+            </div>
+          )}
         </div>
 
         {/* Clarification Prompts Section */}

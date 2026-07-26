@@ -41,7 +41,7 @@ class OpenRouterProvider(BaseLLMProvider):
 
         return '\n'.join(cleaned_lines).strip()
 
-    def generate_text(self, prompt: str, system_instruction: str = "") -> str:
+    def generate_text(self, prompt: str, system_instruction: str = "", max_tokens: int = 1500) -> str:
         if not self.api_key:
             return f"[OpenRouter Simulation Mode]\n\nPrompt: {prompt[:120]}...\n\n(Set OPENROUTER_API_KEY in backend/.env to activate live OpenRouter models)."
 
@@ -61,19 +61,19 @@ class OpenRouterProvider(BaseLLMProvider):
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": 1500
+            "temperature": 0.1,
+            "max_tokens": max_tokens
         }
 
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=10.0) as client:
                 res = client.post(url, json=payload, headers=headers)
                 res.raise_for_status()
                 data = res.json()
                 raw_content = data["choices"][0]["message"]["content"]
                 return self._sanitize_output(raw_content)
         except Exception as e:
-            logger.error(f"OpenRouter API request failed: {e}")
+            logger.warning(f"OpenRouter API request timeout/error: {e}")
             return f"[OpenRouter API Error]: {e}"
 
     def generate_structured_json(self, prompt: str, schema_description: str, system_instruction: str = "") -> Dict[str, Any]:
@@ -86,7 +86,7 @@ Respond strictly with valid JSON conforming to this schema:
 Input content:
 {prompt}
 """
-        raw_text = self.generate_text(full_prompt)
+        raw_text = self.generate_text(full_prompt, max_tokens=650)
         try:
             cleaned = raw_text
             if "```json" in cleaned:

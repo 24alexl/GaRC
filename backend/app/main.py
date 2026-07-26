@@ -36,6 +36,7 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+@app.get("/", response_class=HTMLResponse)
 @app.get("/app", response_class=HTMLResponse)
 def serve_web_ui():
     html_path = os.path.join(static_dir, "index.html")
@@ -52,8 +53,8 @@ class Engine2CommitRequest(BaseModel):
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
 
-@app.get("/")
-def root():
+@app.get("/api")
+def api_info():
     return {
         "service": "GaRC - GraphRAG Automated Risk & Compliance",
         "status": "online",

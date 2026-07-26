@@ -155,10 +155,11 @@ export default function GraphVisualizer({ graphData, onNodeSelect, highlightCont
       layout: {
         name: 'breadthfirst',
         directed: true,
-        padding: 35,
-        spacingFactor: 1.7,
+        padding: 40,
+        spacingFactor: 1.8,
         avoidOverlap: true,
-        nodeDimensionsIncludeLabels: true
+        nodeDimensionsIncludeLabels: true,
+        roots: 'node[type = "cloud_service"], node[type = "firewall"], node[type = "subnet"]'
       }
     });
 

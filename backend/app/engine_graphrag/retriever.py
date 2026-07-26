@@ -8,10 +8,14 @@ logger = logging.getLogger("garc.engine1.retriever")
 class GraphRAGRetriever:
     def retrieve_relevant_subgraph(self, query: str) -> Dict[str, Any]:
         """
-        Executes multi-hop Cypher queries across NIST 800-171 controls and 
-        returns the graph paths, nodes, and relationships for XAI visualization.
+        Executes semantic scoring across NIST 800-171 controls and 
+        returns direct multi-hop graph paths (User Query -> NIST Controls -> Objectives) for XAI visualization.
         """
-        keywords = [k.lower() for k in query.split() if len(k) > 3]
+        query_lower = query.lower()
+        audit_intent_keywords = ["audit", "topology", "evaluate", "assess", "compliance status", "my network", "my setup", "devices", "infrastructure"]
+        is_audit_intent = any(kw in query_lower for kw in audit_intent_keywords)
+
+        keywords = [k.lower() for k in query.split() if len(k) > 2]
         
         if not neo4j_client.mock_mode and neo4j_client.driver:
             cypher = """
@@ -24,33 +28,79 @@ class GraphRAGRetriever:
             """
             records = neo4j_client.query(cypher)
         else:
-            # Filter from in-memory seed dataset for demo/mock mode
-            records = []
+            # Import active topology to evaluate specific gaps
+            from app.engine_topology.parser import topology_parser
+            active_nodes = topology_parser.active_topology_nodes
+
+            # Semantic keyword relevance scoring across title, description, guidance, and objectives
+            scored_controls = []
             for ctrl in NIST_CONTROLS_DATA:
-                match = any(kw in ctrl["title"].lower() or kw in ctrl["description"].lower() or kw in ctrl["family"].lower() for kw in keywords)
-                if match or len(keywords) == 0:
-                    records.append({
+                fam_name = ctrl.get("family", ctrl.get("family_name", "Security Requirements"))
+                ctrl_title = ctrl.get("title", f"NIST {ctrl.get('id', '')}")
+                ctrl_desc = ctrl.get("description", "")
+                ctrl_guidance = ctrl.get("small_biz_guidance", "")
+                objs = ctrl.get("objectives", ctrl.get("assessment_objectives", []))
+                objs_str = " ".join(objs)
+                ctrl_id = ctrl.get("id", "")
+
+                score = 0
+
+                # 1. Standard keyword match scoring
+                for kw in keywords:
+                    if kw in ctrl_title.lower():
+                        score += 5
+                    if kw in ctrl_desc.lower():
+                        score += 3
+                    if kw in ctrl_guidance.lower():
+                        score += 2
+                    if kw in objs_str.lower():
+                        score += 2
+                    if kw in fam_name.lower():
+                        score += 1
+
+                # 2. Intent-Based Boost: Active Topology Risk Mapping
+                if is_audit_intent:
+                    score += 2 # Base audit intent boost
+                    if active_nodes:
+                        has_cui = any(n.stores_cui for n in active_nodes)
+                        missing_sec = any(not n.has_firewall_or_mfa for n in active_nodes)
+                        
+                        # Boost Access Control, MFA, Boundary Defense for unauthenticated/unprotected nodes
+                        if missing_sec and ctrl_id in ["03.01.01", "03.05.03", "03.13.01", "03.14.02"]:
+                            score += 15
+                        # Boost Media Protection / Encryption for CUI storage
+                        if has_cui and ctrl_id in ["03.08.07", "03.13.16", "03.08.01"]:
+                            score += 15
+
+                if score > 0 or len(keywords) == 0:
+                    scored_controls.append((score, {
                         "id": ctrl["id"],
-                        "title": ctrl["title"],
-                        "description": ctrl["description"],
-                        "guidance": ctrl.get("small_biz_guidance", ""),
-                        "family": ctrl["family"],
-                        "objectives": ctrl.get("objectives", ctrl.get("assessment_objectives", []))
-                    })
+                        "title": ctrl_title,
+                        "description": ctrl_desc,
+                        "guidance": ctrl_guidance,
+                        "family": fam_name,
+                        "objectives": objs
+                    }))
+
+            # Sort controls by relevance score descending
+            scored_controls.sort(key=lambda x: x[0], reverse=True)
+            # Return all relevant controls (Score >= 10) for comprehensive auditing
+            records = [item[1] for item in scored_controls if item[0] >= 10]
+
             if not records:
                 records = [
                     {
                         "id": ctrl["id"],
-                        "title": ctrl["title"],
-                        "description": ctrl["description"],
+                        "title": ctrl.get("title", f"NIST {ctrl.get('id', '')}"),
+                        "description": ctrl.get("description", ""),
                         "guidance": ctrl.get("small_biz_guidance", ""),
-                        "family": ctrl["family"],
+                        "family": ctrl.get("family", ctrl.get("family_name", "Security Requirements")),
                         "objectives": ctrl.get("objectives", ctrl.get("assessment_objectives", []))
                     }
                     for ctrl in NIST_CONTROLS_DATA[:3]
                 ]
 
-        # Formulate nodes and edges for Cytoscape.js multi-hop reasoning visualization
+        # Formulate clean nodes and edges for Cytoscape.js multi-hop reasoning visualization (NO Family clutter)
         nodes = []
         edges = []
 
@@ -64,32 +114,22 @@ class GraphRAGRetriever:
             }
         })
 
-        for item in records:
-            fam_id = f"Fam_{item['family'].replace(' ', '_')}"
+        # Limit UI rendering to top 5 most critical controls to prevent visual spaghetti
+        for item in records[:5]:
             ctrl_id = f"Ctrl_{item['id']}"
 
-            # Family Node
-            if not any(n["data"]["id"] == fam_id for n in nodes):
-                nodes.append({
-                    "data": {
-                        "id": fam_id,
-                        "label": f"Family: {item['family']}",
-                        "type": "family"
-                    }
-                })
-
-            # Control Node
+            # Direct Control Node (Clean Label)
             nodes.append({
                 "data": {
                     "id": ctrl_id,
-                    "label": f"NIST {item['id']}: {item['title']}",
+                    "label": f"NIST {item['id']}\n({item['family']})",
                     "type": "control",
                     "description": item["description"],
                     "guidance": item["guidance"]
                 }
             })
 
-            # Query -> Control Edge
+            # Direct Query -> Control Edge
             edges.append({
                 "data": {
                     "source": "User_Query",
@@ -98,16 +138,7 @@ class GraphRAGRetriever:
                 }
             })
 
-            # Control -> Family Edge
-            edges.append({
-                "data": {
-                    "source": ctrl_id,
-                    "target": fam_id,
-                    "label": "BELONGS_TO"
-                }
-            })
-
-            # Objective Nodes
+            # Objective Nodes directly linked to Control
             for idx, obj in enumerate(item.get("objectives", [])[:2]):
                 obj_id = f"Obj_{item['id']}_{idx}"
                 nodes.append({
