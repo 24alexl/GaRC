@@ -91,12 +91,7 @@ OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
 
 ### Step 3: Run FastAPI App
 
-**If your terminal is in the project root directory (`garc`):**
-```powershell
-python -m uvicorn backend.app.main:app --reload --port 8001
-```
-
-**Or if your terminal is inside the `backend` directory:**
+**Ensure your terminal is inside the `backend` directory:**
 ```powershell
 cd backend
 .\venv\Scripts\activate
