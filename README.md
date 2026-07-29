@@ -1,4 +1,4 @@
-# GaRC (Graph augmented Risk & Compliance)
+# GaRC (Graph-augmented Risk & Compliance)
 > **OUPI Cyber Clinic Contest 2026 Entry** — *Category 2: AI-enabled cybersecurity solution for underserved communities*
 
 GaRC is a guided Explainable AI (XAI) platform designed to make **NIST SP 800-171 Rev 3 compliance assessment** and **network topology modeling** accessible, automated, and explainable for small businesses, non-profits, and underserved organizations lacking dedicated SecOps staff.
