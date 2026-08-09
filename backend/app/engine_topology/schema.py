@@ -1,10 +1,13 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
+
+NodeType = Literal["device", "server", "storage", "data_asset", "firewall", "user", "subnet", "cloud_service"]
+RelationshipType = Literal["MEMBER_OF", "LOGS_IN_VIA", "ROUTES_TO", "ACCESSES", "STORES", "PROTECTS", "STORES_CUI"]
 
 class NetworkNode(BaseModel):
     id: str = Field(description="Unique node identifier e.g. dev_workstation_1, nas_storage, firewall_gateway")
     name: str = Field(description="Human readable name e.g. Office NAS, Windows Admin PC")
-    type: str = Field(description="Node type: device, server, storage, firewall, user, subnet, cloud_service")
+    type: str = Field(description="Node type: device, server, storage, data_asset, firewall, user, subnet, cloud_service")
     os_or_system: Optional[str] = Field(default="Unknown", description="Operating system or system software")
     ip_or_subnet: Optional[str] = Field(default="Unknown", description="IP address or CIDR subnet")
     stores_cui: bool = Field(default=False, description="Whether this node processes or stores Controlled Unclassified Information (CUI)")
@@ -14,7 +17,7 @@ class NetworkNode(BaseModel):
 class NetworkEdge(BaseModel):
     source: str = Field(description="Source node ID")
     target: str = Field(description="Target node ID")
-    relationship: str = Field(description="Relationship type: CONNECTS_TO, ACCESSES, STORES, PROTECTS")
+    relationship: str = Field(description="Relationship type: MEMBER_OF, LOGS_IN_VIA, ROUTES_TO, ACCESSES, STORES, PROTECTS, STORES_CUI")
     is_encrypted: bool = Field(default=False, description="Whether connection is encrypted (TLS/VPN)")
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Relationship extraction confidence score")
 

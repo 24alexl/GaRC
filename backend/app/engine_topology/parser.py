@@ -15,16 +15,23 @@ class TopologyParser:
 
     def parse_natural_language_topology(self, text: str) -> Dict[str, Any]:
         """
-        Engine 2 Instant Pipeline:
-        1. Instantly parses natural language network description into structured nodes/edges (<0.01s).
-        2. Evaluates confidence scores & security attributes (MFA, CUI flag, Encryption).
-        3. Identifies missing or ambiguous cybersecurity attributes & generates clarification cards.
-        4. Calculates compliance readiness for gap scorecard.
+        Engine 2 Pipeline:
+        1. Attempts LLM structured extraction to handle complex/messy natural language prompts.
+        2. Falls back to deterministic rule-based parser if LLM is unreachable or times out.
+        3. Evaluates confidence scores & security attributes (MFA, CUI flag, Encryption).
+        4. Identifies missing or ambiguous cybersecurity attributes & generates clarification cards.
+        5. Calculates compliance readiness for gap scorecard.
         """
-        logger.info(f"Engine 2: Executing high-speed network topology extraction for input: '{text[:60]}...'")
+        logger.info(f"Engine 2: Executing network topology extraction for input: '{text[:60]}...'")
         
-        # High-speed deterministic network entity & topology graph builder
-        nodes, edges, clarification_prompts = self._fallback_rule_based_parser(text)
+        nodes, edges, clarification_prompts = None, None, None
+        try:
+            nodes, edges, clarification_prompts = self._llm_structured_parser(text)
+        except Exception as e:
+            logger.warning(f"Engine 2: LLM structured parsing failed ({e}). Falling back to rule-based parser.")
+
+        if not nodes:
+            nodes, edges, clarification_prompts = self._fallback_rule_based_parser(text)
 
         # Update active session topology
         self.active_topology_nodes = nodes
@@ -76,6 +83,140 @@ class TopologyParser:
             }
         }
         return result
+
+    def _llm_structured_parser(self, text: str):
+        """
+        Uses configured LLM provider to parse freeform natural language network descriptions
+        into structured NetworkNodes, NetworkEdges, and ClarificationPrompts.
+        """
+        from app.llm.factory import get_llm_provider
+        
+        system_instruction = """You are an expert cybersecurity network architect.
+Parse the user's natural language network description into a structured JSON graph according to the formal GaRC topology schema.
+
+Schema Requirements:
+Allowed Node Types: ["device", "server", "storage", "data_asset", "firewall", "user", "subnet", "cloud_service"]
+Allowed Relationship Types: ["MEMBER_OF", "LOGS_IN_VIA", "ROUTES_TO", "ACCESSES", "STORES", "PROTECTS", "STORES_CUI"]
+
+Node Rules:
+- id: unique snake_case string (e.g. dev_laptops, server_win2022, storage_truenas, data_cui_files, cloud_aws)
+- name: concise human readable label (e.g. "Dell Laptops", "Windows Server 2022", "TrueNAS Volume", "Client CUI Files")
+- type: one of the Allowed Node Types
+- os_or_system: operating system or firmware if specified (e.g. "Windows 11", "TrueNAS SCALE", "AWS S3")
+- ip_or_subnet: CIDR range or IP address if specified (e.g. "192.168.1.0/24")
+- stores_cui: boolean true if node stores or processes CUI or sensitive compliance data
+- has_firewall_or_mfa: boolean true if firewall, EDR, or MFA is explicitly active on this asset
+- confidence: float 0.0 to 1.0
+
+Edge Rules:
+- source: node id
+- target: node id
+- relationship: one of the Allowed Relationship Types (MEMBER_OF, LOGS_IN_VIA, ROUTES_TO, ACCESSES, STORES, PROTECTS, STORES_CUI)
+- is_encrypted: boolean true if traffic/storage uses TLS, VPN, BitLocker, or volume encryption
+- confidence: float 0.0 to 1.0
+
+Clarification Rules:
+Generate a clarification_prompt if security features (MFA, CUI volume encryption, firewall) are unstated or ambiguous.
+"""
+
+        schema_description = """{
+  "nodes": [
+    {
+      "id": "dev_laptops",
+      "name": "Dell Laptops",
+      "type": "device",
+      "os_or_system": "Windows 11",
+      "ip_or_subnet": "192.168.1.0/24",
+      "stores_cui": false,
+      "has_firewall_or_mfa": false,
+      "confidence": 0.95
+    }
+  ],
+  "edges": [
+    {
+      "source": "dev_laptops",
+      "target": "subnet_lan",
+      "relationship": "MEMBER_OF",
+      "is_encrypted": false,
+      "confidence": 0.95
+    }
+  ],
+  "clarification_prompts": [
+    {
+      "node_id": "storage_truenas",
+      "question": "Is the TrueNAS volume encrypted with BitLocker/AES-256?",
+      "property_in_question": "is_encrypted",
+      "suggested_options": ["Encrypted", "Unencrypted"]
+    }
+  ]
+}"""
+
+        prompt = f"Parse this natural language network description into structured JSON:\n\n\"{text}\""
+        
+        llm = get_llm_provider()
+        payload = llm.generate_structured_json(prompt, schema_description=schema_description, system_instruction=system_instruction)
+
+        if not payload or not isinstance(payload, dict) or "nodes" not in payload:
+            return None, None, None
+
+        nodes: List[NetworkNode] = []
+        edges: List[NetworkEdge] = []
+        prompts: List[ClarificationPrompt] = []
+
+        valid_node_types = {"device", "server", "storage", "data_asset", "firewall", "user", "subnet", "cloud_service"}
+        valid_rel_types = {"MEMBER_OF", "LOGS_IN_VIA", "ROUTES_TO", "ACCESSES", "STORES", "PROTECTS", "STORES_CUI"}
+
+        for raw_node in payload.get("nodes", []):
+            try:
+                ntype = str(raw_node.get("type", "device")).lower()
+                if ntype not in valid_node_types:
+                    ntype = "device"
+                nodes.append(NetworkNode(
+                    id=str(raw_node.get("id", "node_1")),
+                    name=str(raw_node.get("name", "Network Asset")),
+                    type=ntype,
+                    os_or_system=str(raw_node.get("os_or_system", "Unknown")),
+                    ip_or_subnet=str(raw_node.get("ip_or_subnet", "Unknown")),
+                    stores_cui=bool(raw_node.get("stores_cui", False)),
+                    has_firewall_or_mfa=bool(raw_node.get("has_firewall_or_mfa", False)),
+                    confidence=float(raw_node.get("confidence", 0.90))
+                ))
+            except Exception as ne:
+                logger.debug(f"Failed to parse LLM raw node: {ne}")
+
+        node_ids = {n.id for n in nodes}
+
+        for raw_edge in payload.get("edges", []):
+            try:
+                src = str(raw_edge.get("source", ""))
+                tgt = str(raw_edge.get("target", ""))
+                rel = str(raw_edge.get("relationship", "ACCESSES")).upper()
+                if rel not in valid_rel_types:
+                    rel = "ACCESSES"
+                if src in node_ids and tgt in node_ids:
+                    edges.append(NetworkEdge(
+                        source=src,
+                        target=tgt,
+                        relationship=rel,
+                        is_encrypted=bool(raw_edge.get("is_encrypted", False)),
+                        confidence=float(raw_edge.get("confidence", 0.90))
+                    ))
+            except Exception as ee:
+                logger.debug(f"Failed to parse LLM raw edge: {ee}")
+
+        for raw_prompt in payload.get("clarification_prompts", []):
+            try:
+                prompts.append(ClarificationPrompt(
+                    node_id=raw_prompt.get("node_id"),
+                    edge=raw_prompt.get("edge"),
+                    question=str(raw_prompt.get("question", "Please clarify asset security setting.")),
+                    property_in_question=str(raw_prompt.get("property_in_question", "has_firewall_or_mfa")),
+                    suggested_options=list(raw_prompt.get("suggested_options", ["Yes", "No"]))
+                ))
+            except Exception as pe:
+                logger.debug(f"Failed to parse LLM raw prompt: {pe}")
+
+        return nodes, edges, prompts
 
     def _fallback_rule_based_parser(self, text: str):
         text_lower = text.lower()

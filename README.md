@@ -5,55 +5,41 @@ GaRC is a guided Explainable AI (XAI) platform designed to make **NIST SP 800-17
 
 ---
 
-## 🌟 Key Features & 3-Step Guided Compliance Architecture
+## 🌟 Architecture & Core Engines
 
-```
-                          +-----------------------------------+
-                          |      FastAPI Web UI Dashboard     |
-                          |  (Cytoscape.js XAI & Topology)    |
-                          +-----------------+-----------------+
-                                            |
-                          +-----------------+-----------------+
-                          |  Welcome Landing & Guided Setup   |
-                          +-----------------+-----------------+
-                                            |
-         +----------------------------------+----------------------------------+
-         |                                  |                                  |
-         v                                  v                                  v
-+------------------------+      +------------------------+      +------------------------+
-|  Step 1: Network       |      |  Step 2: Compliance    |      |  Step 3: NIST 800-171  |
-|  Topology Builder      | ---> |  Assistant (GraphRAG)  | ---> |  Gap Scorecard         |
-|  (Sub-ms Extraction)   |      |  (Intent Topology Audit)|      |  (Real-Time Readiness) |
-+------------------------+      +------------------------+      +------------------------+
-                                            |
-                                            v
-                          +-----------------------------------+
-                          |  Pluggable LLM Provider System    |
-                          |   (OpenRouter / Gemini / Ollama)  |
-                          +-----------------+-----------------+
-                                            |
-                                            v
-                          +-----------------------------------+
-                          |  Neo4j DB (or In-Memory Fallback) |
-                          +-----------------------------------+
+```mermaid
+graph TD
+    User([User Prompt]) --> Dashboard[FastAPI Web UI Dashboard]
+    Dashboard --> Choice{User Workflow}
+    
+    Choice -->|Step 1| Engine2[Engine 2: Network Topology Builder]
+    Engine2 -->|LLM + Rules| TopologyGraph[Structured Topology Graph]
+    TopologyGraph -->|Clarification| Cards[1-Click Clarification Cards]
+    
+    Choice -->|Step 2| Engine1[Engine 1: GraphRAG Compliance Copilot]
+    TopologyGraph --> Engine1
+    Engine1 -->|Multi-Hop Retrieval| Neo4j[NIST 800-171 Knowledge Graph]
+    Engine1 -->|Context Prompt| LLMProvider[Pluggable LLM Provider System]
+    
+    Engine1 -->|XAI Tracing| Cytoscape[Interactive Cytoscape Visualizer]
+    Engine1 --> Scorecard[Step 3: NIST 800-171 Gap Scorecard]
+
+    subgraph LLM Providers
+        LLMProvider --> OpenRouter[OpenRouter API]
+        LLMProvider --> Gemini[Gemini API]
+        LLMProvider --> Ollama[Local Ollama]
+    end
 ```
 
-### 1. Welcome Landing & 3-Step Guided Workflow
-- **Welcome Choice Screen**: Choose to either map your network architecture first (Recommended) or jump straight to compliance Q&A.
-- **Visual Workflow Stepper**: Seamless breadcrumb navigation with directional step indicators:
-  $$\text{Step 1: 🗺️ Network Topology} \longrightarrow \text{Step 2: 💬 Compliance Assistant (GraphRAG)} \longrightarrow \text{Step 3: 📊 Gap Scorecard}$$
+### 🗺️ Engine 2: Network Topology Builder
+- **LLM-First Structured Extraction**: Parses messy, non-technical natural language descriptions into canonical network nodes (subnets, devices, storage, VPNs) and edge relationships with rule-based fallback.
+- **Interactive Clarification Cards**: Automatically flags ambiguous security attributes (e.g. unconfirmed volume encryption or MFA) and prompts the user for 1-click confirmation.
 
-### 2. Step 1: High-Speed Network Topology Builder
-- **Sub-Millisecond Natural Language Extraction**: Instantly extracts network entities (workstations, NAS storage, routers, subnets) and security attributes (MFA, CUI data, encryption) in $<0.01\text{s}$.
-- **Interactive Clarification Cards**: Automatically identifies ambiguous security configurations (e.g. unconfirmed MFA or storage encryption) and prompts the user for 1-click confirmation before persisting the topology graph.
+### 💬 Engine 1: GraphRAG Compliance Copilot
+- **"Guide, Don't Prescribe" Intuition Engine**: Acts as a CISO's intuition engine and auditor's assistant. Generates investigative flags (🔍), cloud scope alerts (☁️), and network segmentation risk warnings (⚠️) with actionable **Action for Assessor** prompts.
+- **Multi-Hop Subgraph Retrieval & XAI Tracing**: Traverses the NIST SP 800-171 Knowledge Graph (`Query` $\to$ `Control` $\to$ `Objective` $\to$ `Active Topology Node`) and dynamically renders the exact reasoning path on an interactive Cytoscape canvas.
 
-### 3. Step 2: GraphRAG Compliance Copilot & Intent-Driven Topology Audits
-- **"Guide, Don't Prescribe" Intuition Engine**: GaRC acts as a CISO's intuition engine and an auditor's assistant rather than a definitive remediation bot. It spots pattern anomalies, highlights potential scope creep traps, and separates shared responsibilities between your on-premise hardware and cloud providers.
-- **Intent-Driven Active Topology Audits**: Ask prompts like *"audit my network topology"* or *"assess my setup"*. The Copilot automatically traces paths across your active devices from Step 1, generating specific **Investigative Flags** and actionable prompts for human assessors rather than prescriptive assumptions.
-- **Preloaded NIST SP 800-171 Rev 3 Knowledge Graph**: Official NIST CPRT dataset containing all 17 Control Families, 97 Security Controls, Assessment Objectives, and Small Business Guidance.
-- **Explainable AI (XAI) Multi-Hop Paths & Interactive Tracing**: Generates clean Markdown answers with inline `[Trace Control_ID]` links. Clicking any trace link dynamically prunes and highlights the reasoning sequence on the Cytoscape canvas.
-
-### 4. Step 3: NIST SP 800-171 Gap Scorecard
+### 📊 Step 3: NIST SP 800-171 Gap Scorecard
 - **Dynamic Readiness Scoring**: Computes your overall compliance readiness percentage based on active network topology attributes.
 
 ---
@@ -86,7 +72,7 @@ Open `.env` and add your **OpenRouter API Key** (or Gemini API Key):
 ```env
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
-OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
+OPENROUTER_MODEL=google/gemini-2.0-flash-001
 ```
 
 ### Step 3: Run FastAPI App

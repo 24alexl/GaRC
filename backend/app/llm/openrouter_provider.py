@@ -41,7 +41,7 @@ class OpenRouterProvider(BaseLLMProvider):
 
         return '\n'.join(cleaned_lines).strip()
 
-    def generate_text(self, prompt: str, system_instruction: str = "", max_tokens: int = 1500) -> str:
+    def generate_text(self, prompt: str, system_instruction: str = "", max_tokens: int = 1500, response_format: dict = None) -> str:
         if not self.api_key:
             return f"[OpenRouter Simulation Mode]\n\nPrompt: {prompt[:120]}...\n\n(Set OPENROUTER_API_KEY in backend/.env to activate live OpenRouter models)."
 
@@ -64,6 +64,8 @@ class OpenRouterProvider(BaseLLMProvider):
             "temperature": 0.1,
             "max_tokens": max_tokens
         }
+        if response_format:
+            payload["response_format"] = response_format
 
         try:
             with httpx.Client(timeout=10.0) as client:
@@ -86,7 +88,7 @@ Respond strictly with valid JSON conforming to this schema:
 Input content:
 {prompt}
 """
-        raw_text = self.generate_text(full_prompt, max_tokens=650)
+        raw_text = self.generate_text(full_prompt, max_tokens=2000, response_format={"type": "json_object"})
         try:
             cleaned = raw_text
             if "```json" in cleaned:
