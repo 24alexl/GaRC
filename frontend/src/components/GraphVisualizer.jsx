@@ -85,10 +85,12 @@ export default function GraphVisualizer({ graphData, onNodeSelect, highlightCont
         {
           selector: 'node[type = "objective"]',
           style: {
-            'background-color': '#78350f',
-            'border-color': '#fbbf24',
-            'width': 32,
-            'height': 32,
+            'background-color': '#451a03',
+            'border-color': '#f59e0b',
+            'border-width': 1.5,
+            'width': 24,
+            'height': 24,
+            'font-size': '9.5px',
             'color': '#fef08a'
           }
         },
