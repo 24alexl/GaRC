@@ -3,6 +3,7 @@ import json
 import re
 from typing import Dict, Any, List
 from app.engine_topology.schema import TopologyParseResult, NetworkNode, NetworkEdge, ClarificationPrompt
+from app.engine_topology.templates import SMALL_BIZ_TEMPLATES
 from app.db.neo4j_client import neo4j_client
 
 logger = logging.getLogger("garc.engine2.parser")
@@ -12,6 +13,7 @@ class TopologyParser:
         # Active session state for evaluated topologies
         self.active_topology_nodes: List[NetworkNode] = []
         self.active_topology_edges: List[NetworkEdge] = []
+        self.active_clarification_prompts: List[ClarificationPrompt] = []
 
     def parse_natural_language_topology(self, text: str) -> Dict[str, Any]:
         """
@@ -99,10 +101,16 @@ Allowed Node Types: ["device", "server", "storage", "data_asset", "firewall", "u
 Allowed Relationship Types: ["MEMBER_OF", "LOGS_IN_VIA", "ROUTES_TO", "ACCESSES", "STORES", "PROTECTS", "STORES_CUI"]
 
 Node Rules:
-- id: unique snake_case string (e.g. dev_laptops, server_win2022, storage_truenas, data_cui_files, cloud_aws)
-- name: concise human readable label (e.g. "Dell Laptops", "Windows Server 2022", "TrueNAS Volume", "Client CUI Files")
+- id: unique snake_case string (e.g. dev_wifi_pcs, dev_front_desk, server_proxmox, storage_nas, data_cui, fw_gateway, subnet_lan, subnet_wifi)
+- name: concise human readable label (e.g. "5x Windows PCs (Wi-Fi)", "1x Front Desk PC", "Proxmox VE Hypervisor", "Proxmox Storage / NAS", "Payroll CUI Data")
 - type: one of the Allowed Node Types
-- os_or_system: operating system or firmware if specified (e.g. "Windows 11", "TrueNAS SCALE", "AWS S3")
+  * Use "server" for hypervisors, hosts, virtualization servers, domain controllers (e.g. Proxmox VE, ESXi, Hyper-V, Ubuntu Server).
+  * Use "device" for client endpoints, PCs, laptops, workstations.
+  * Use "storage" for NAS, SAN, shared storage volumes, ZFS pools, databases.
+  * Use "data_asset" for CUI, sensitive files, contracts, financial data.
+  * Use "subnet" for IP subnets, VLANs, Wi-Fi networks, wired LANs.
+  * Use "firewall" for perimeter routers, firewalls, security gateways.
+- os_or_system: operating system or firmware if specified (e.g. "Windows 11", "Proxmox VE", "Debian Linux", "TrueNAS SCALE")
 - ip_or_subnet: CIDR range or IP address if specified (e.g. "192.168.1.0/24")
 - stores_cui: boolean true if node stores or processes CUI or sensitive compliance data
 - has_firewall_or_mfa: boolean true if firewall, EDR, or MFA is explicitly active on this asset
@@ -113,7 +121,7 @@ Edge Rules:
 - target: node id
 - relationship: one of the Allowed Relationship Types (MEMBER_OF, LOGS_IN_VIA, ROUTES_TO, ACCESSES, STORES, PROTECTS, STORES_CUI)
 - is_encrypted: boolean true if traffic/storage uses TLS, VPN, BitLocker, or volume encryption
-- confidence: float 0.0 to 1.0
+- Note: If the text states a device does NOT access the NAS or storage, do NOT add an ACCESSES edge between them!
 
 Clarification Rules:
 Generate a clarification_prompt if security features (MFA, CUI volume encryption, firewall) are unstated or ambiguous.
@@ -122,30 +130,48 @@ Generate a clarification_prompt if security features (MFA, CUI volume encryption
         schema_description = """{
   "nodes": [
     {
-      "id": "dev_laptops",
-      "name": "Dell Laptops",
-      "type": "device",
-      "os_or_system": "Windows 11",
-      "ip_or_subnet": "192.168.1.0/24",
+      "id": "subnet_wifi",
+      "name": "Employee Wi-Fi Network",
+      "type": "subnet",
+      "ip_or_subnet": "192.168.2.0/24",
       "stores_cui": false,
+      "has_firewall_or_mfa": false,
+      "confidence": 0.95
+    },
+    {
+      "id": "server_proxmox",
+      "name": "Proxmox VE Hypervisor",
+      "type": "server",
+      "os_or_system": "Proxmox VE / Linux",
+      "ip_or_subnet": "192.168.1.100",
+      "stores_cui": false,
+      "has_firewall_or_mfa": false,
+      "confidence": 0.95
+    },
+    {
+      "id": "storage_nas",
+      "name": "Proxmox Storage / NAS",
+      "type": "storage",
+      "os_or_system": "ZFS Pool",
+      "stores_cui": true,
       "has_firewall_or_mfa": false,
       "confidence": 0.95
     }
   ],
   "edges": [
     {
-      "source": "dev_laptops",
-      "target": "subnet_lan",
-      "relationship": "MEMBER_OF",
+      "source": "server_proxmox",
+      "target": "storage_nas",
+      "relationship": "STORES",
       "is_encrypted": false,
       "confidence": 0.95
     }
   ],
   "clarification_prompts": [
     {
-      "node_id": "storage_truenas",
-      "question": "Is the TrueNAS volume encrypted with BitLocker/AES-256?",
-      "property_in_question": "is_encrypted",
+      "node_id": "storage_nas",
+      "question": "Is the Proxmox CUI storage volume encrypted at rest with AES-256?",
+      "property_in_question": "has_firewall_or_mfa",
       "suggested_options": ["Encrypted", "Unencrypted"]
     }
   ]
@@ -228,22 +254,42 @@ Generate a clarification_prompt if security features (MFA, CUI volume encryption
         ip_matches = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?\b', text)
         ip_subnet = ip_matches[0] if ip_matches else "192.168.1.0/24"
 
-        # 1. Subnet Node
-        subnet_node_id = "subnet_lan"
-        nodes.append(NetworkNode(
-            id=subnet_node_id,
-            name=f"LAN Subnet ({ip_subnet})",
-            type="subnet",
-            ip_or_subnet=ip_subnet,
-            confidence=0.95
-        ))
+        # 1. Subnets (Wired LAN & Wireless Wi-Fi Segments)
+        has_wifi = any(w in text_lower for w in ["wifi", "wi-fi", "wireless", "ssid", "wlan"])
+        has_lan = any(w in text_lower for w in ["ethernet", "wired", "lan", "switch", "cat6", "desk"]) or not has_wifi
 
-        # 2. Firewall / Gateway Node
-        if any(w in text_lower for w in ["firewall", "router", "gateway", "pfsense", "fortinet", "netgear", "cisco", "meraki"]):
-            fw_name = "Perimeter Firewall / Gateway"
-            if "pfsense" in text_lower: fw_name = "pfSense Firewall"
-            elif "fortinet" in text_lower: fw_name = "Fortinet Firewall"
-            elif "meraki" in text_lower: fw_name = "Cisco Meraki Router"
+        subnet_lan_id = "subnet_lan"
+        subnet_wifi_id = "subnet_wifi"
+
+        if has_lan:
+            nodes.append(NetworkNode(
+                id=subnet_lan_id,
+                name=f"Wired LAN ({ip_subnet})",
+                type="subnet",
+                ip_or_subnet=ip_subnet,
+                confidence=0.95
+            ))
+
+        if has_wifi:
+            nodes.append(NetworkNode(
+                id=subnet_wifi_id,
+                name="Employee Wi-Fi Network",
+                type="subnet",
+                ip_or_subnet="192.168.2.0/24",
+                confidence=0.95
+            ))
+
+        # Primary subnet reference for devices without explicit network specified
+        primary_subnet_id = subnet_wifi_id if (has_wifi and not has_lan) else subnet_lan_id
+
+        # 2. Firewall / Router / Gateway Node
+        if any(w in text_lower for w in ["firewall", "router", "gateway", "pfsense", "fortinet", "netgear", "cisco", "meraki", "udm", "opnsense"]):
+            fw_name = "Perimeter Firewall & Router"
+            if "pfsense" in text_lower: fw_name = "pfSense Security Gateway"
+            elif "opnsense" in text_lower: fw_name = "OPNsense Firewall"
+            elif "fortinet" in text_lower or "fortigate" in text_lower: fw_name = "Fortinet FortiGate Firewall"
+            elif "meraki" in text_lower: fw_name = "Cisco Meraki Security Appliance"
+            elif "router" in text_lower and "firewall" not in text_lower: fw_name = "Network Router"
             
             fw_node_id = "fw_gateway"
             nodes.append(NetworkNode(
@@ -254,103 +300,173 @@ Generate a clarification_prompt if security features (MFA, CUI volume encryption
                 has_firewall_or_mfa=True,
                 confidence=0.95
             ))
-            edges.append(NetworkEdge(source=fw_node_id, target=subnet_node_id, relationship="PROTECTS", confidence=0.95))
+
+            if has_lan:
+                edges.append(NetworkEdge(source=fw_node_id, target=subnet_lan_id, relationship="PROTECTS", confidence=0.95))
+            if has_wifi:
+                edges.append(NetworkEdge(source=fw_node_id, target=subnet_wifi_id, relationship="PROTECTS", confidence=0.95))
         else:
             prompts.append(ClarificationPrompt(
-                node_id="subnet_lan",
+                node_id=primary_subnet_id,
                 question="Is your local network subnet protected by a perimeter firewall or security gateway?",
                 property_in_question="has_firewall_or_mfa",
                 suggested_options=["Yes, stateful firewall installed", "No, direct ISP modem", "Managed Cloud Gateway"]
             ))
 
-        # 3. Workstations / Endpoints Node
-        ws_node_id = "ws_pcs"
-        
-        # Extract explicit count specifically associated with device/workstation/laptop/pc words (avoid matching IP octets!)
-        count_match = re.search(r'\b(\d+)\s*(?:x\s*)?(?:windows|mac|macbook|dell|linux|workstation|pc|laptop|desktop|user|accountant)', text_lower)
-        if count_match:
-            num_pcs = f"{count_match.group(1)}x"
-        elif "6" in text_lower and "6" not in ip_subnet:
-            num_pcs = "6x"
-        elif "8" in text_lower and "8" not in ip_subnet:
-            num_pcs = "8x"
-        elif "10" in text_lower and "10" not in ip_subnet:
-            num_pcs = "10x"
-        else:
-            num_pcs = ""
+        # 3. Servers & Hypervisors (Proxmox, ESXi, Windows Server, Linux Server, etc.)
+        has_server = any(w in text_lower for w in ["proxmox", "esxi", "hyper-v", "hypervisor", "vmware", "virtualization", "windows server", "linux server", "ubuntu server", "debian", "server", "domain controller", "active directory"])
+        server_node_id = None
 
-        # Determine exact device form-factor and OS
-        if "laptop" in text_lower or "macbook" in text_lower:
-            if "windows" in text_lower: os_name = "Windows Laptops"
-            elif "mac" in text_lower or "macbook" in text_lower: os_name = "MacBook Laptops"
-            else: os_name = "Workstation Laptops"
-        elif "windows 11" in text_lower:
-            os_name = "Windows 11 Workstations"
-        elif "windows" in text_lower:
-            os_name = "Windows Workstations"
-        elif "mac" in text_lower:
-            os_name = "Mac Workstations"
-        else:
-            os_name = "Desktop Workstations"
+        if has_server:
+            server_node_id = "server_host"
+            server_name = "Virtualization Server"
+            server_os = "Virtualization OS"
 
-        ws_name = f"{num_pcs} {os_name}".strip()
-
-        nodes.append(NetworkNode(
-            id=ws_node_id,
-            name=ws_name,
-            type="device",
-            os_or_system=os_name,
-            ip_or_subnet=ip_subnet,
-            confidence=0.90
-        ))
-        edges.append(NetworkEdge(source=ws_node_id, target=subnet_node_id, relationship="CONNECTS_TO", confidence=0.95))
-
-        # 4. Storage / NAS / Database Node
-        has_local_storage = any(w in text_lower for w in ["nas", "storage", "synology", "qnap", "truenas", "file server", "database", "sql", "windows server", "local windows server"])
-        nas_node_id = None
-        has_cui = any(w in text_lower for w in ["cui", "payroll", "contracts", "sensitive", "confidential", "hipaa", "tax", "donor"])
-        has_mfa = any(w in text_lower for w in ["mfa enabled", "bitlocker", "mfa active", "encrypted"])
-        
-        if has_local_storage:
-            nas_node_id = "storage_local"
-            nas_name = "Local File Server / NAS"
-            if "synology" in text_lower: nas_name = "Synology NAS Storage"
-            elif "qnap" in text_lower: nas_name = "QNAP NAS Storage"
-            elif "truenas" in text_lower: nas_name = "TrueNAS Storage Server"
-            elif "windows server" in text_lower: nas_name = "Windows Server 2022"
+            if "proxmox" in text_lower:
+                server_node_id = "server_proxmox"
+                server_name = "Proxmox VE Hypervisor"
+                server_os = "Proxmox VE / Debian Linux"
+            elif "esxi" in text_lower or "vmware" in text_lower:
+                server_node_id = "server_esxi"
+                server_name = "VMware ESXi Host"
+                server_os = "VMware ESXi"
+            elif "hyper-v" in text_lower:
+                server_node_id = "server_hyperv"
+                server_name = "Hyper-V Host Server"
+                server_os = "Windows Server Hyper-V"
+            elif "windows server" in text_lower:
+                server_node_id = "server_win2022"
+                server_name = "Windows Server 2022"
+                server_os = "Windows Server 2022"
+            elif "ubuntu" in text_lower or "debian" in text_lower or "linux" in text_lower:
+                server_node_id = "server_linux"
+                server_name = "Linux Application Server"
+                server_os = "Linux (Debian/Ubuntu)"
 
             nodes.append(NetworkNode(
-                id=nas_node_id,
-                name=nas_name,
+                id=server_node_id,
+                name=server_name,
+                type="server",
+                os_or_system=server_os,
+                ip_or_subnet="192.168.1.100",
+                has_firewall_or_mfa=False,
+                confidence=0.95
+            ))
+            # Attach server to wired LAN
+            target_sub = subnet_lan_id if has_lan else primary_subnet_id
+            edges.append(NetworkEdge(source=server_node_id, target=target_sub, relationship="CONNECTS_TO", confidence=0.95))
+
+        # 4. Multi-Cohort Endpoints & Workstations
+        # Detect specific device groups: (e.g. "5 Windows PC on employee wifi", "1 front desk pc ethernet", etc.)
+        device_cohorts = []
+
+        # Check for Wi-Fi PCs / Laptops
+        wifi_pc_match = re.search(r'(\d+)?\s*(?:x\s*)?(?:windows|mac|dell|linux|workstation|pc|laptop)?\s*(?:pc|pcs|laptops|workstations|computers|users)?\s*(?:on|via|connected to)?\s*(?:employee\s*)?(?:wifi|wi-fi|wireless)', text_lower)
+        if wifi_pc_match and has_wifi:
+            cnt = wifi_pc_match.group(1) or "5"
+            device_cohorts.append({
+                "id": "dev_wifi_pcs",
+                "name": f"{cnt}x Windows PCs (Employee Wi-Fi)",
+                "os": "Windows 11",
+                "target_subnet": subnet_wifi_id
+            })
+
+        # Check for Front Desk / Reception / Admin PCs
+        front_desk_match = re.search(r'(\d+)?\s*(?:x\s*)?(?:front\s*desk|reception|admin|billing|receptionist)\s*(?:pc|computer|workstation)?(?:\s*(?:ethernet|wired|lan))?', text_lower)
+        if front_desk_match:
+            cnt = front_desk_match.group(1) or "1"
+            device_cohorts.append({
+                "id": "dev_front_desk",
+                "name": f"{cnt}x Front Desk PC (Ethernet)",
+                "os": "Windows 11 Pro",
+                "target_subnet": subnet_lan_id if has_lan else primary_subnet_id
+            })
+
+        # If no specific cohorts were matched by patterns above, use standard endpoint extractor
+        if not device_cohorts:
+            count_match = re.search(r'\b(\d+)\s*(?:x\s*)?(?:windows|mac|macbook|dell|linux|workstation|pc|laptop|desktop|user|accountant)', text_lower)
+            num_pcs = f"{count_match.group(1)}x" if count_match else ""
+            
+            if "laptop" in text_lower or "macbook" in text_lower:
+                os_name = "Windows Laptops" if "windows" in text_lower else "MacBook Laptops" if "mac" in text_lower else "Workstation Laptops"
+            elif "windows 11" in text_lower:
+                os_name = "Windows 11 Workstations"
+            elif "windows" in text_lower:
+                os_name = "Windows Workstations"
+            elif "mac" in text_lower:
+                os_name = "Mac Workstations"
+            else:
+                os_name = "Workstations"
+
+            device_cohorts.append({
+                "id": "ws_pcs",
+                "name": f"{num_pcs} {os_name}".strip(),
+                "os": os_name,
+                "target_subnet": primary_subnet_id
+            })
+
+        for dev in device_cohorts:
+            nodes.append(NetworkNode(
+                id=dev["id"],
+                name=dev["name"],
+                type="device",
+                os_or_system=dev["os"],
+                ip_or_subnet="DHCP Client Range",
+                confidence=0.90
+            ))
+            edges.append(NetworkEdge(source=dev["id"], target=dev["target_subnet"], relationship="CONNECTS_TO", confidence=0.95))
+
+        # 5. Storage / NAS / Volumes / Databases
+        has_local_storage = any(w in text_lower for w in ["nas", "storage", "synology", "qnap", "truenas", "file server", "database", "sql", "volume", "share", "nfs", "smb", "san"])
+        has_cui = any(w in text_lower for w in ["cui", "payroll", "contracts", "sensitive", "confidential", "hipaa", "tax", "donor", "defense"])
+        has_mfa = any(w in text_lower for w in ["mfa enabled", "bitlocker", "mfa active", "encrypted", "aes-256", "zfs encryption"])
+
+        storage_node_id = None
+        if has_local_storage or (server_node_id and ("storage" in text_lower or has_cui)):
+            storage_node_id = "storage_cui_volume" if has_cui else "storage_local"
+            storage_name = "Network Storage / NAS"
+            
+            if "synology" in text_lower: storage_name = "Synology NAS Storage"
+            elif "qnap" in text_lower: storage_name = "QNAP NAS Storage"
+            elif "truenas" in text_lower: storage_name = "TrueNAS Storage Volume"
+            elif server_node_id == "server_proxmox": storage_name = "Proxmox Virtual Storage / NAS"
+            elif server_node_id: storage_name = "Virtual Storage Volume (Server)"
+
+            nodes.append(NetworkNode(
+                id=storage_node_id,
+                name=storage_name,
                 type="storage",
-                os_or_system="Storage OS",
+                os_or_system="ZFS / Storage OS",
                 ip_or_subnet="192.168.1.50",
-                stores_cui=False, # Wait until we know where CUI is stored
+                stores_cui=has_cui,
                 has_firewall_or_mfa=has_mfa,
                 confidence=0.90
             ))
-            edges.append(NetworkEdge(source=nas_node_id, target=subnet_node_id, relationship="CONNECTS_TO", confidence=0.95))
-            edges.append(NetworkEdge(source=ws_node_id, target=nas_node_id, relationship="ACCESSES", confidence=0.90))
+
+            # If storage is on a server/hypervisor, link server -> storage
+            if server_node_id:
+                edges.append(NetworkEdge(source=server_node_id, target=storage_node_id, relationship="STORES", confidence=0.95))
+            else:
+                target_sub = subnet_lan_id if has_lan else primary_subnet_id
+                edges.append(NetworkEdge(source=storage_node_id, target=target_sub, relationship="CONNECTS_TO", confidence=0.95))
+
+            # Access rules: Check if access is explicitly denied or limited (e.g. "Windows doesnt access the NAS")
+            windows_blocked = any(w in text_lower for w in ["windows doesnt access", "windows doesn't access", "no access to nas", "isolated from nas", "blocked from nas", "cannot access"])
             
-            # Local non-CUI financial/doc assets
-            if "financial" in text_lower or "documents" in text_lower:
-                doc_node_id = "data_financial"
-                nodes.append(NetworkNode(
-                    id=doc_node_id,
-                    name="Financial Documents & Files",
-                    type="data_asset",
-                    stores_cui=False,
-                    confidence=0.95
-                ))
-                edges.append(NetworkEdge(source=nas_node_id, target=doc_node_id, relationship="STORES", confidence=0.95))
+            for dev in device_cohorts:
+                # If Windows is explicitly blocked, do NOT add ACCESSES edge for wifi/windows pcs
+                if windows_blocked and ("wifi" in dev["id"] or "windows" in dev["name"].lower()):
+                    continue
+                # Front desk or authorized devices access storage
+                if not windows_blocked or "front_desk" in dev["id"] or "admin" in dev["id"]:
+                    edges.append(NetworkEdge(source=dev["id"], target=storage_node_id, relationship="ACCESSES", confidence=0.90))
 
-
-        # 5. Cloud / VPN Gateway Node
-        has_cloud = any(w in text_lower for w in ["aws", "azure", "cloud", "vpn", "openvpn"])
+        # 6. Cloud / VPN Gateway Node
+        has_cloud = any(w in text_lower for w in ["aws", "azure", "cloud", "vpn", "openvpn", "wireguard"])
         cloud_node_id = None
         if has_cloud:
             cloud_node_id = "cloud_vpn"
-            cloud_name = "Cloud Gateway / OpenVPN"
+            cloud_name = "Cloud Gateway / VPN"
             if "aws" in text_lower: cloud_name = "AWS Cloud Gateway (OpenVPN)"
             elif "azure" in text_lower: cloud_name = "Azure Virtual Network"
 
@@ -361,29 +477,16 @@ Generate a clarification_prompt if security features (MFA, CUI volume encryption
                 has_firewall_or_mfa=True,
                 confidence=0.85
             ))
-            # Workstations connect to VPN
-            edges.append(NetworkEdge(source=ws_node_id, target=cloud_node_id, relationship="CONNECTS_TO", confidence=0.90))
+            for dev in device_cohorts:
+                edges.append(NetworkEdge(source=dev["id"], target=cloud_node_id, relationship="CONNECTS_TO", confidence=0.90))
 
-            # Optional: Infrastructure behind the cloud
-            cloud_storage_id = "cloud_storage"
-            nodes.append(NetworkNode(
-                id=cloud_storage_id,
-                name=f"{cloud_name.split()[0]} Storage Infrastructure",
-                type="storage",
-                has_firewall_or_mfa=True,
-                confidence=0.85
-            ))
-            edges.append(NetworkEdge(source=cloud_node_id, target=cloud_storage_id, relationship="ROUTES_TO", confidence=0.90))
-
-
-        # 6. CUI Data Asset Node
+        # 7. CUI Data Asset Node
         if has_cui:
             cui_node_id = "cui_data"
-            cui_label = "Payroll Contracts & CUI Data"
-            if "hipaa" in text_lower or "patient" in text_lower: cui_label = "Patient Records & CUI"
-            elif "dod" in text_lower or "cad" in text_lower: cui_label = "DoD CAD Blueprints & CUI"
+            cui_label = "Controlled Unclassified Information (CUI)"
+            if "payroll" in text_lower or "contract" in text_lower: cui_label = "Payroll Contracts & CUI Data"
+            elif "hipaa" in text_lower or "patient" in text_lower: cui_label = "Patient Records & CUI"
             elif "tax" in text_lower: cui_label = "Tax Returns & Client CUI"
-            elif "donor" in text_lower: cui_label = "Donor Files & CUI"
 
             nodes.append(NetworkNode(
                 id=cui_node_id,
@@ -393,22 +496,213 @@ Generate a clarification_prompt if security features (MFA, CUI volume encryption
                 confidence=0.95
             ))
             
-            # Determine where CUI is stored
-            if has_cloud and ("cloud" in text_lower[text_lower.find("cui")-20:text_lower.find("cui")+20] or "aws" in text_lower or "azure" in text_lower):
-                # Stored in Cloud
-                edges.append(NetworkEdge(source=cloud_storage_id, target=cui_node_id, relationship="STORES", confidence=0.95))
-            elif nas_node_id:
-                # Stored locally
-                edges.append(NetworkEdge(source=nas_node_id, target=cui_node_id, relationship="STORES", confidence=0.95))
+            if storage_node_id:
+                edges.append(NetworkEdge(source=storage_node_id, target=cui_node_id, relationship="STORES_CUI", confidence=0.95))
                 if not has_mfa:
                     prompts.append(ClarificationPrompt(
-                        node_id=nas_node_id,
-                        question=f"Does '{nas_name}' enforce Multifactor Authentication (MFA) or AES-256 volume encryption for CUI data?",
+                        node_id=storage_node_id,
+                        question=f"Is CUI storage on '{storage_name}' encrypted with AES-256 / ZFS at-rest encryption?",
                         property_in_question="has_firewall_or_mfa",
-                        suggested_options=["Yes, MFA & Encryption active", "No encryption currently", "Unsure"]
+                        suggested_options=["Yes, AES-256 / BitLocker encrypted", "No encryption currently", "Unsure"]
                     ))
 
         return nodes, edges, prompts
+
+    def get_available_templates(self) -> List[Dict[str, Any]]:
+        """Returns summary list of all available small business templates."""
+        return [
+            {
+                "id": t["id"],
+                "name": t["name"],
+                "badge": t["badge"],
+                "description": t["description"],
+                "node_count": len(t["nodes"]),
+                "edge_count": len(t["edges"])
+            }
+            for t in SMALL_BIZ_TEMPLATES.values()
+        ]
+
+    def load_template(self, template_id: str) -> Dict[str, Any]:
+        """Loads a preconfigured small business network template into active session."""
+        if template_id not in SMALL_BIZ_TEMPLATES:
+            template_id = "clinic"
+        
+        tpl = SMALL_BIZ_TEMPLATES[template_id]
+        nodes = [NetworkNode(**n) for n in tpl["nodes"]]
+        edges = [NetworkEdge(**e) for e in tpl["edges"]]
+        prompts = [ClarificationPrompt(**cp) for cp in tpl.get("clarification_prompts", [])]
+
+        self.active_topology_nodes = nodes
+        self.active_topology_edges = edges
+        self.active_clarification_prompts = prompts
+
+        return self.format_topology_response(f"Template: {tpl['name']}", nodes, edges, prompts)
+
+    def format_topology_response(self, text: str, nodes: List[NetworkNode], edges: List[NetworkEdge], prompts: List[ClarificationPrompt]) -> Dict[str, Any]:
+        """Helper to format uniform topology response payload for API & Cytoscape with compound subnet grouping and clean labels."""
+        conf_scores = [n.confidence for n in nodes] + [e.confidence for e in edges]
+        avg_conf = sum(conf_scores) / len(conf_scores) if conf_scores else 0.95
+
+        # 1. Identify all subnet nodes
+        subnet_ids = {n.id for n in nodes if n.type == "subnet"}
+
+        # 2. Map devices/servers/storage to their respective parent subnets
+        node_to_parent_subnet = {}
+        for e in edges:
+            if e.relationship in ["CONNECTS_TO", "MEMBER_OF"]:
+                if e.target in subnet_ids and e.source not in subnet_ids:
+                    node_to_parent_subnet[e.source] = e.target
+                elif e.source in subnet_ids and e.target not in subnet_ids:
+                    node_to_parent_subnet[e.target] = e.source
+
+        cyto_nodes = []
+        cyto_edges = []
+
+        # 3. Add Subnet Parent Compound Nodes first
+        for n in nodes:
+            if n.type == "subnet":
+                cyto_nodes.append({
+                    "data": {
+                        "id": n.id,
+                        "label": n.name,
+                        "type": "subnet",
+                        "is_parent": True,
+                        "confidence": n.confidence,
+                        "ip_or_subnet": n.ip_or_subnet,
+                        "details": f"Subnet / VLAN: {n.ip_or_subnet}"
+                    }
+                })
+
+        # 4. Add Child Device / Asset Nodes inside their subnets
+        for n in nodes:
+            if n.type == "subnet":
+                continue
+
+            sec_tags = []
+            if n.stores_cui: sec_tags.append("CUI")
+            if n.has_firewall_or_mfa: sec_tags.append("MFA/FW")
+            tag_str = f" [{ ' | '.join(sec_tags) }]" if sec_tags else ""
+
+            node_data = {
+                "id": n.id,
+                "label": f"{n.name}{tag_str}",
+                "type": n.type,
+                "confidence": n.confidence,
+                "stores_cui": n.stores_cui,
+                "has_firewall_or_mfa": n.has_firewall_or_mfa,
+                "os_or_system": n.os_or_system,
+                "ip_or_subnet": n.ip_or_subnet,
+                "details": f"OS: {n.os_or_system} | IP: {n.ip_or_subnet}"
+            }
+
+            # Assign parent compound subnet if mapped
+            if n.id in node_to_parent_subnet:
+                node_data["parent"] = node_to_parent_subnet[n.id]
+
+            cyto_nodes.append({"data": node_data})
+
+        # 5. Add meaningful inter-device and perimeter edges (filter redundant device->parent subnet edges)
+        for e in edges:
+            # Skip edge if it simply links a child node to its containing parent subnet box
+            if (node_to_parent_subnet.get(e.source) == e.target) or (node_to_parent_subnet.get(e.target) == e.source):
+                continue
+
+            cyto_edges.append({
+                "data": {
+                    "id": f"{e.source}_{e.target}",
+                    "source": e.source,
+                    "target": e.target,
+                    "label": e.relationship,
+                    "relationship": e.relationship,
+                    "is_encrypted": e.is_encrypted,
+                    "confidence": e.confidence
+                }
+            })
+
+        return {
+            "raw_text": text,
+            "nodes": [n.model_dump() for n in nodes],
+            "edges": [e.model_dump() for e in edges],
+            "confidence_score": round(avg_conf, 2),
+            "requires_clarification": len(prompts) > 0,
+            "clarification_prompts": [cp.model_dump() for cp in prompts],
+            "cytoscape_graph": {
+                "nodes": cyto_nodes,
+                "edges": cyto_edges
+            }
+        }
+
+    def update_node(self, node_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Updates properties of an existing node in the active topology and manages subnet assignment."""
+        subnet_ids = {n.id for n in self.active_topology_nodes if n.type == "subnet"}
+
+        # If subnet_id was passed, manage subnet connection edge
+        if "subnet_id" in updates:
+            new_subnet_id = updates.pop("subnet_id")
+            # Remove existing subnet connection edges for this node
+            self.active_topology_edges = [
+                e for e in self.active_topology_edges 
+                if not ((e.source == node_id and e.target in subnet_ids) or (e.target == node_id and e.source in subnet_ids))
+            ]
+            if new_subnet_id and new_subnet_id in subnet_ids:
+                self.active_topology_edges.append(
+                    NetworkEdge(source=node_id, target=new_subnet_id, relationship="CONNECTS_TO", confidence=1.0)
+                )
+
+        for idx, n in enumerate(self.active_topology_nodes):
+            if n.id == node_id:
+                curr = n.model_dump()
+                curr.update(updates)
+                self.active_topology_nodes[idx] = NetworkNode(**curr)
+                break
+        return self.format_topology_response("Node updated", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
+
+    def add_node(self, node_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Adds a new node to the active topology with optional subnet assignment."""
+        subnet_id = node_dict.pop("subnet_id", None)
+        new_node = NetworkNode(**node_dict)
+        # Avoid duplicate ids
+        self.active_topology_nodes = [n for n in self.active_topology_nodes if n.id != new_node.id]
+        self.active_topology_nodes.append(new_node)
+
+        subnet_ids = {n.id for n in self.active_topology_nodes if n.type == "subnet"}
+        if subnet_id and subnet_id in subnet_ids:
+            self.active_topology_edges.append(
+                NetworkEdge(source=new_node.id, target=subnet_id, relationship="CONNECTS_TO", confidence=1.0)
+            )
+
+        return self.format_topology_response("Node added", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
+
+    def delete_node(self, node_id: str) -> Dict[str, Any]:
+        """Deletes a node and all its connected edges."""
+        self.active_topology_nodes = [n for n in self.active_topology_nodes if n.id != node_id]
+        self.active_topology_edges = [e for e in self.active_topology_edges if e.source != node_id and e.target != node_id]
+        self.active_clarification_prompts = [cp for cp in self.active_clarification_prompts if cp.node_id != node_id]
+        return self.format_topology_response("Node deleted", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
+
+    def clear_topology(self) -> Dict[str, Any]:
+        """Clears all active topology nodes, edges, and clarifications (blank canvas)."""
+        self.active_topology_nodes = []
+        self.active_topology_edges = []
+        self.active_clarification_prompts = []
+        return self.format_topology_response("Workspace cleared", [], [], [])
+
+    def add_edge(self, edge_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Adds a connection edge between two nodes."""
+        new_edge = NetworkEdge(**edge_dict)
+        self.active_topology_edges = [e for e in self.active_topology_edges if not (e.source == new_edge.source and e.target == new_edge.target)]
+        self.active_topology_edges.append(new_edge)
+        return self.format_topology_response("Edge added", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
+
+    def answer_clarification(self, node_id: str, property_name: str, value: Any) -> Dict[str, Any]:
+        """Resolves a clarification prompt and updates node property."""
+        self.update_node(node_id, {property_name: value})
+        # Remove resolved clarification prompt
+        self.active_clarification_prompts = [
+            cp for cp in self.active_clarification_prompts 
+            if not (cp.node_id == node_id and cp.property_in_question == property_name)
+        ]
+        return self.format_topology_response("Clarification resolved", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
 
     def persist_topology_to_neo4j(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Persists the user-approved topology nodes & edges to Neo4j database."""
@@ -443,3 +737,4 @@ Generate a clarification_prompt if security features (MFA, CUI volume encryption
         return {"status": "persisted", "node_count": len(nodes), "edge_count": len(edges)}
 
 topology_parser = TopologyParser()
+

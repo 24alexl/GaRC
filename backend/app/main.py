@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("garc.main")
 
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 import os
 
 app = FastAPI(
@@ -53,6 +53,40 @@ class Engine2CommitRequest(BaseModel):
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
 
+class ExplainControlRequest(BaseModel):
+    control_id: str
+
+class UpdateNodeRequest(BaseModel):
+    node_id: str
+    updates: Dict[str, Any]
+
+class AddNodeRequest(BaseModel):
+    id: str
+    name: str
+    type: str
+    os_or_system: str = "Unknown"
+    ip_or_subnet: str = "192.168.1.0/24"
+    stores_cui: bool = False
+    has_firewall_or_mfa: bool = False
+
+class DeleteNodeRequest(BaseModel):
+    node_id: str
+
+class AddEdgeRequest(BaseModel):
+    source: str
+    target: str
+    relationship: str = "CONNECTS_TO"
+    is_encrypted: bool = False
+
+class AnswerClarificationRequest(BaseModel):
+    node_id: str
+    property_name: str
+    value: Any
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)
+
 @app.get("/api")
 def api_info():
     return {
@@ -69,6 +103,51 @@ def health():
         "db_connected": not neo4j_client.mock_mode,
         "llm_provider": settings.LLM_PROVIDER
     }
+
+@app.get("/api/templates")
+def get_templates():
+    """Returns available quick-start small business templates."""
+    return topology_parser.get_available_templates()
+
+@app.post("/api/templates/load/{template_id}")
+def load_template_endpoint(template_id: str):
+    """Loads a small business template into active session."""
+    return topology_parser.load_template(template_id)
+
+@app.post("/api/topology/update-node")
+def update_node_endpoint(req: UpdateNodeRequest):
+    """Updates properties of a specific node."""
+    return topology_parser.update_node(req.node_id, req.updates)
+
+@app.post("/api/topology/add-node")
+def add_node_endpoint(req: AddNodeRequest):
+    """Adds a new node to the active topology."""
+    return topology_parser.add_node(req.model_dump())
+
+@app.post("/api/topology/delete-node")
+def delete_node_endpoint(req: DeleteNodeRequest):
+    """Deletes a node and connected edges."""
+    return topology_parser.delete_node(req.node_id)
+
+@app.post("/api/topology/clear")
+def clear_topology_endpoint():
+    """Clears all active topology nodes (empty workspace)."""
+    return topology_parser.clear_topology()
+
+@app.post("/api/topology/add-edge")
+def add_edge_endpoint(req: AddEdgeRequest):
+    """Adds a connection between two nodes."""
+    return topology_parser.add_edge(req.model_dump())
+
+@app.post("/api/topology/answer-clarification")
+def answer_clarification_endpoint(req: AnswerClarificationRequest):
+    """Answers a clarification prompt and updates node state."""
+    return topology_parser.answer_clarification(req.node_id, req.property_name, req.value)
+
+@app.get("/api/report/export")
+def export_report_endpoint(org_name: str = "Client Organization"):
+    """Generates complete structured data for executive & assessor reporting."""
+    return xai_reasoner.generate_executive_report_data(org_name)
 
 @app.post("/api/seed")
 def seed_kg():
@@ -94,65 +173,97 @@ def engine2_commit(req: Engine2CommitRequest):
     res = topology_parser.persist_topology_to_neo4j(req.nodes, req.edges)
     return res
 
+@app.post("/api/audit/evaluate-topology")
+def audit_evaluate_topology():
+    """
+    Executes a high-speed parallel audit across the 5 core technical families
+    evaluating active topology against CPRT assessment objectives.
+    """
+    nodes = topology_parser.active_topology_nodes
+    edges = topology_parser.active_topology_edges
+    res = xai_reasoner.run_parallel_topology_audit(nodes, edges)
+    return res
+
+@app.post("/api/audit/explain-control")
+def audit_explain_control(req: ExplainControlRequest):
+    """
+    Generates single-click contextual explanation for a specific control finding.
+    """
+    nodes = topology_parser.active_topology_nodes
+    edges = topology_parser.active_topology_edges
+    res = xai_reasoner.explain_control_finding(req.control_id, nodes, edges)
+    return res
+
 @app.get("/api/nist-scorecard")
 def nist_scorecard():
     """Generates dynamic NIST 800-171 gap analysis summary based on active topology."""
     nodes = topology_parser.active_topology_nodes
     edges = topology_parser.active_topology_edges
 
+    # If audit results already exist, return high-fidelity objective metrics
+    if xai_reasoner.latest_audit_result:
+        audit = xai_reasoner.latest_audit_result
+        return {
+            "status": "Assessed",
+            "total_controls": audit.get("total_controls_evaluated", 30),
+            "implemented_controls": audit.get("met_count", 0),
+            "partial_controls": audit.get("insufficient_data_count", 0),
+            "gap_controls": audit.get("unmet_count", 0),
+            "compliance_score_pct": audit.get("overall_score_pct", 0.0),
+            "active_node_count": len(nodes),
+            "family_scores": [
+                {
+                    "family": f"{f['family_name']} ({f['family_code']})",
+                    "score": f["score_pct"],
+                    "status": f["status"],
+                    "met": f["met"],
+                    "unmet": f["unmet"],
+                    "insufficient_data": f["insufficient_data"]
+                }
+                for f in audit.get("family_scorecards", [])
+            ],
+            "evaluated_controls": audit.get("evaluated_controls", [])
+        }
+
     if not nodes:
         return {
             "status": "Unassessed",
-            "message": "No active network topology committed. Use Engine 2 to describe your organization's network setup.",
-            "total_controls": 110,
+            "message": "No active network topology committed. Use Step 1 to describe your organization's network setup.",
+            "total_controls": 30,
             "implemented_controls": 0,
             "partial_controls": 0,
-            "gap_controls": 110,
+            "gap_controls": 30,
             "compliance_score_pct": 0.0,
             "family_scores": [
-                {"family": "Access Control (3.1)", "score": 0, "status": "Not Assessed"},
-                {"family": "Awareness & Training (3.2)", "score": 0, "status": "Not Assessed"},
-                {"family": "Audit & Accountability (3.3)", "score": 0, "status": "Not Assessed"},
-                {"family": "Identification & Auth (3.5)", "score": 0, "status": "Not Assessed"},
-                {"family": "System & Comm Protection (3.13)", "score": 0, "status": "Not Assessed"},
-                {"family": "System & Info Integrity (3.14)", "score": 0, "status": "Not Assessed"}
+                {"family": "Access Control (03.01)", "score": 0, "status": "Not Assessed"},
+                {"family": "Identification & Auth (03.05)", "score": 0, "status": "Not Assessed"},
+                {"family": "Media Protection (03.08)", "score": 0, "status": "Not Assessed"},
+                {"family": "System & Comm Protection (03.13)", "score": 0, "status": "Not Assessed"},
+                {"family": "System & Info Integrity (03.14)", "score": 0, "status": "Not Assessed"}
             ]
         }
 
-    # Dynamic scoring evaluation
-    has_mfa_or_fw = any(n.has_firewall_or_mfa for n in nodes)
-    has_firewall_node = any(n.type == "firewall" for n in nodes)
-    has_cui = any(n.stores_cui for n in nodes)
-    cui_secured = has_cui and has_mfa_or_fw
-
-    ac_score = 75 if has_mfa_or_fw else 30
-    ia_score = 85 if has_mfa_or_fw else 20
-    sc_score = 90 if has_firewall_node else (50 if has_mfa_or_fw else 25)
-    si_score = 60 if has_mfa_or_fw else 30
-
-    implemented = 0
-    if has_mfa_or_fw: implemented += 25
-    if has_firewall_node: implemented += 20
-    if cui_secured: implemented += 15
-    if len(nodes) > 1: implemented += 10
-
-    partial = 20 if implemented > 0 else 0
-    gaps = max(0, 110 - (implemented + partial))
-
-    total_score = round(((implemented * 1.0) + (partial * 0.5)) / 110 * 100, 1)
-
+    # Run instant evaluation if topology is present
+    audit = xai_reasoner.run_parallel_topology_audit(nodes, edges)
     return {
         "status": "Assessed",
-        "total_controls": 110,
-        "implemented_controls": implemented,
-        "partial_controls": partial,
-        "gap_controls": gaps,
-        "compliance_score_pct": total_score,
+        "total_controls": audit.get("total_controls_evaluated", 30),
+        "implemented_controls": audit.get("met_count", 0),
+        "partial_controls": audit.get("insufficient_data_count", 0),
+        "gap_controls": audit.get("unmet_count", 0),
+        "compliance_score_pct": audit.get("overall_score_pct", 0.0),
         "active_node_count": len(nodes),
         "family_scores": [
-            {"family": "Access Control (3.1)", "score": ac_score, "status": "Good" if ac_score >= 70 else "Action Needed"},
-            {"family": "Identification & Auth (3.5)", "score": ia_score, "status": "Good" if ia_score >= 70 else "Critical Gap"},
-            {"family": "System & Comm Protection (3.13)", "score": sc_score, "status": "Good" if sc_score >= 70 else "Action Needed"},
-            {"family": "System & Info Integrity (3.14)", "score": si_score, "status": "Action Needed" if si_score >= 50 else "Critical Gap"}
-        ]
+            {
+                "family": f"{f['family_name']} ({f['family_code']})",
+                "score": f["score_pct"],
+                "status": f["status"],
+                "met": f["met"],
+                "unmet": f["unmet"],
+                "insufficient_data": f["insufficient_data"]
+            }
+            for f in audit.get("family_scorecards", [])
+        ],
+        "evaluated_controls": audit.get("evaluated_controls", [])
     }
+

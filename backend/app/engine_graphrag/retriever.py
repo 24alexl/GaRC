@@ -5,7 +5,46 @@ from app.db.seed_nist_800_171 import NIST_CONTROLS_DATA
 
 logger = logging.getLogger("garc.engine1.retriever")
 
+CORE_TECHNICAL_FAMILIES = {
+    "03.01": {"name": "Access Control", "short_code": "AC", "focus": "Boundary routing, remote access, authorized connections"},
+    "03.05": {"name": "Identification and Authentication", "short_code": "IA", "focus": "MFA, credential management, remote gateway auth"},
+    "03.08": {"name": "Media Protection", "short_code": "MP", "focus": "CUI storage protection, volume encryption at rest"},
+    "03.13": {"name": "System and Communications Protection", "short_code": "SC", "focus": "Perimeter firewalls, subnet isolation, transit encryption"},
+    "03.14": {"name": "System and Information Integrity", "short_code": "SI", "focus": "Boundary malicious code detection, endpoint EDR, flaw remediation"}
+}
+
 class GraphRAGRetriever:
+    def get_technical_family_subgraphs(self) -> Dict[str, Any]:
+        """
+        Extracts all NIST SP 800-171 Rev 3 controls and assessment objectives
+        specifically for the 5 core technical / network-pertaining families.
+        """
+        technical_families = {}
+        for fam_code, meta in CORE_TECHNICAL_FAMILIES.items():
+            fam_controls = []
+            for ctrl in NIST_CONTROLS_DATA:
+                ctrl_id = ctrl.get("id", "")
+                if ctrl_id.startswith(fam_code):
+                    fam_controls.append({
+                        "id": ctrl_id,
+                        "title": ctrl.get("title", f"NIST {ctrl_id}"),
+                        "description": ctrl.get("description", ""),
+                        "guidance": ctrl.get("small_biz_guidance", ""),
+                        "objectives": ctrl.get("objectives", []),
+                        "references_800_53": ctrl.get("references_800_53", [])
+                    })
+            
+            technical_families[fam_code] = {
+                "family_code": fam_code,
+                "family_name": meta["name"],
+                "short_code": meta["short_code"],
+                "focus": meta["focus"],
+                "control_count": len(fam_controls),
+                "controls": fam_controls
+            }
+
+        return technical_families
+
     def retrieve_relevant_subgraph(self, query: str) -> Dict[str, Any]:
         """
         Executes semantic scoring across NIST 800-171 controls and 
@@ -100,7 +139,7 @@ class GraphRAGRetriever:
                     for ctrl in NIST_CONTROLS_DATA[:3]
                 ]
 
-        # Formulate clean nodes and edges for Cytoscape.js multi-hop reasoning visualization (NO Family clutter)
+        # Formulate clean nodes and edges for Cytoscape.js multi-hop reasoning visualization
         nodes = []
         edges = []
 
@@ -114,7 +153,7 @@ class GraphRAGRetriever:
             }
         })
 
-        # Limit UI rendering to top 5 most critical controls to prevent visual spaghetti
+        # Limit UI rendering to top 5 most critical controls to prevent visual clutter
         for item in records[:5]:
             ctrl_id = f"Ctrl_{item['id']}"
 

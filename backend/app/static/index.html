@@ -1,920 +1,1420 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GaRC - GraphRAG Automated Risk & Compliance</title>
+  <title>GaRC — Guided Cybersecurity & NIST SP 800-171 Compliance</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Dagre Hierarchical Layout Engine for Untangled Graphs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
   <style>
-    body { font-family: 'Inter', sans-serif; background-color: #090d16; color: #f8fafc; }
+    html, body { height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; background-color: #080c14; color: #f1f5f9; }
     code, pre { font-family: 'JetBrains Mono', monospace; }
-    .glass-panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; }
-
-    /* Custom Markdown Typography Styles */
-    .prose-custom h2 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: #38bdf8;
-      margin-top: 1rem;
-      margin-bottom: 0.5rem;
-      border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-      padding-bottom: 0.35rem;
-    }
-    .prose-custom h3 {
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: #c084fc;
-      margin-top: 0.85rem;
-      margin-bottom: 0.4rem;
-    }
-    .prose-custom p {
-      margin-bottom: 0.75rem;
-      line-height: 1.6;
-      color: #e2e8f0;
-    }
-    .prose-custom ul {
-      margin-top: 0.5rem;
-      margin-bottom: 0.85rem;
-      padding-left: 1.4rem;
-      list-style-type: disc !important;
-    }
-    .prose-custom ol {
-      margin-top: 0.5rem;
-      margin-bottom: 0.85rem;
-      padding-left: 1.4rem;
-      list-style-type: decimal !important;
-    }
-    .prose-custom li {
-      margin-bottom: 0.4rem;
-      line-height: 1.5;
-      color: #cbd5e1;
-    }
-    .prose-custom strong {
-      color: #38bdf8;
-      font-weight: 600;
-    }
-
-    /* Custom Inline XAI Hyperlinks */
-    .prose-custom a[href^="#trace-"] {
-      color: #fef08a !important;
-      background: rgba(217, 119, 6, 0.25);
-      border: 1px solid rgba(245, 158, 11, 0.6);
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.82rem;
-      font-weight: 600;
-      padding: 2px 7px;
-      border-radius: 6px;
-      text-decoration: none !important;
-      display: inline-flex;
-      align-items: center;
-      margin-left: 4px;
-      cursor: pointer;
-      transition: all 0.2s ease-in-out;
-    }
-    .prose-custom a[href^="#trace-"]:hover {
-      background: rgba(245, 158, 11, 0.5);
-      color: #ffffff !important;
-      border-color: #fef08a;
-      box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
-      transform: translateY(-1px);
+    .glass-card { background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .glass-card-hover:hover { border-color: rgba(6, 182, 212, 0.4); }
+    .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scroll::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
+    .custom-scroll::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.6); border-radius: 4px; }
+    @media print {
+      body { background: #ffffff !important; color: #000000 !important; overflow: visible !important; }
+      .no-print { display: none !important; }
+      .print-only { display: block !important; }
+      .glass-card { background: #ffffff !important; border: 1px solid #e2e8f0 !important; color: #0f172a !important; }
     }
   </style>
 </head>
-<body>
-  <div id="root"></div>
+<body class="h-full flex flex-col">
+  <div id="root" class="h-full flex flex-col"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    function GraphVisualizer({ graphData, onNodeSelect, highlightControlId }) {
+
+
+    // --- Interactive Cytoscape Visualizer ---
+    function GraphVisualizer({ graphData, activeTab, onNodeSelect, selectedNodeId, xaiFamilyFilter }) {
       const containerRef = useRef(null);
       const cyRef = useRef(null);
+      const [currentLayoutName, setCurrentLayoutName] = useState('dagre');
 
       useEffect(() => {
-        if (!containerRef.current) return;
-        const elements = [];
-        if (graphData?.nodes) {
-          graphData.nodes.forEach(n => elements.push({ group: 'nodes', data: n.data }));
-        }
-        if (graphData?.edges) {
-          graphData.edges.forEach(e => elements.push({ group: 'edges', data: e.data }));
+        if (!containerRef.current || !graphData) return;
+
+        // Register dagre if available
+        try {
+          if (typeof cytoscape('core', 'dagre') === 'undefined' && typeof cytoscapeDagre !== 'undefined') {
+            cytoscape.use(cytoscapeDagre);
+          }
+        } catch (e) {
+          console.debug("Dagre registration:", e);
         }
 
-        const isGraphRAG = graphData?.nodes?.some(n => n.data.type === 'query');
+        const isXAIView = activeTab === 'xai';
+        let filteredNodes = graphData.nodes ? [...graphData.nodes] : [];
+        let filteredEdges = graphData.edges ? [...graphData.edges] : [];
+
+        // If XAI view has a family filter selected (not ALL), filter graph elements
+        if (isXAIView && xaiFamilyFilter && xaiFamilyFilter !== 'ALL') {
+          const allowedNodeIds = new Set(['Audit_Root', `Fam_${xaiFamilyFilter}`]);
+          filteredNodes.forEach(n => {
+            const id = n.data.id;
+            if (id.startsWith(`Ctrl_${xaiFamilyFilter}`) || id.startsWith(`Obj_${xaiFamilyFilter}`)) {
+              allowedNodeIds.add(id);
+            }
+          });
+          filteredNodes = filteredNodes.filter(n => allowedNodeIds.has(n.data.id));
+          filteredEdges = filteredEdges.filter(e => allowedNodeIds.has(e.data.source) && allowedNodeIds.has(e.data.target));
+        }
+
+        const elements = [];
+        filteredNodes.forEach(n => elements.push({ group: 'nodes', data: n.data }));
+        filteredEdges.forEach(e => elements.push({ group: 'edges', data: e.data }));
+
+        // Choose layout configuration
+        let layoutConfig = {
+          name: 'dagre',
+          rankDir: isXAIView ? 'LR' : 'TB',
+          nodeSep: isXAIView ? 35 : 45,
+          rankSep: isXAIView ? 75 : 65,
+          edgeSep: 25,
+          padding: 25,
+          animate: true,
+          animationDuration: 300
+        };
+
+        if (currentLayoutName === 'concentric') {
+          layoutConfig = {
+            name: 'concentric',
+            concentric: function(node) {
+              const t = node.data('type');
+              if (t === 'firewall' || t === 'query') return 4;
+              if (t === 'subnet' || t === 'family') return 3;
+              if (t === 'server' || t === 'control') return 2;
+              return 1;
+            },
+            levelWidth: function() { return 1; },
+            padding: 25,
+            animate: true
+          };
+        } else if (currentLayoutName === 'cose') {
+          layoutConfig = {
+            name: 'cose',
+            idealEdgeLength: 80,
+            nodeOverlap: 15,
+            fit: true,
+            padding: 25,
+            randomize: false,
+            componentSpacing: 80,
+            nodeRepulsion: 300000,
+            edgeElasticity: 100,
+            nestingFactor: 5,
+            gravity: 80,
+            numIter: 1000,
+            animate: true
+          };
+        }
 
         const cy = cytoscape({
           container: containerRef.current,
           elements: elements,
+          minZoom: 0.25,
+          maxZoom: 1.15,
           style: [
+            // Standard Leaf Node Style
             {
               selector: 'node',
               style: {
                 'label': 'data(label)',
                 'background-color': '#1e293b',
                 'border-width': 2,
-                'border-color': '#06b6d4',
+                'border-color': '#38bdf8',
                 'color': '#f8fafc',
-                'font-size': '11px',
+                'font-size': '10px',
                 'font-family': 'Inter, sans-serif',
-                'font-weight': 500,
+                'font-weight': 600,
                 'text-valign': 'bottom',
-                'text-margin-y': 6,
+                'text-margin-y': 5,
                 'text-wrap': 'wrap',
                 'text-max-width': '120px',
-                'text-background-color': '#090d16',
-                'text-background-opacity': 0.85,
-                'text-background-padding': '3px',
+                'text-background-color': '#080c14',
+                'text-background-opacity': 0.9,
+                'text-background-padding': '2px',
                 'text-background-shape': 'roundrectangle',
-                'width': 36,
-                'height': 36,
+                'width': 38,
+                'height': 38,
+                'shape': 'roundrectangle',
                 'transition-property': 'background-color, border-color, border-width, width, height',
-                'transition-duration': '0.3s'
+                'transition-duration': '0.2s'
               }
             },
+            // Subnet Parent Compound Grouping Style
             {
-              selector: 'node[type = "query"]',
+              selector: ':parent',
               style: {
-                'background-color': '#047857',
-                'border-color': '#34d399',
-                'width': 52,
-                'height': 52,
-                'font-weight': 'bold',
-                'color': '#34d399'
-              }
-            },
-            {
-              selector: 'node[type = "family"]',
-              style: {
-                'background-color': '#581c87',
-                'border-color': '#c084fc',
-                'width': 46,
-                'height': 46,
-                'color': '#e9d5ff'
-              }
-            },
-            {
-              selector: 'node[type = "control"]',
-              style: {
-                'background-color': '#0369a1',
-                'border-color': '#38bdf8',
-                'width': 42,
-                'height': 42,
-                'color': '#bae6fd'
-              }
-            },
-            {
-              selector: 'node[type = "objective"]',
-              style: {
-                'background-color': '#451a03',
-                'border-color': '#f59e0b',
+                'background-color': '#0f172a',
+                'background-opacity': 0.45,
                 'border-width': 1.5,
-                'width': 24,
-                'height': 24,
-                'font-size': '9.5px',
-                'color': '#fef08a'
+                'border-color': '#0284c7',
+                'border-style': 'dashed',
+                'shape': 'roundrectangle',
+                'padding': '18px',
+                'text-valign': 'top',
+                'text-halign': 'center',
+                'text-margin-y': -6,
+                'color': '#38bdf8',
+                'font-size': '10px',
+                'font-weight': 700,
+                'font-family': 'Inter, sans-serif',
+                'text-background-color': '#080c14',
+                'text-background-opacity': 0.9,
+                'text-background-padding': '2px',
+                'text-background-shape': 'roundrectangle'
               }
             },
+            // Node Classes with Native Vector Shapes (100% zero HTTP requests)
             {
-              selector: 'node[type = "storage"]',
+              selector: 'node[type = "device"]',
               style: {
-                'background-color': '#9a3412',
-                'border-color': '#fb923c',
-                'width': 40,
-                'height': 40
+                'shape': 'round-rectangle',
+                'background-color': '#0284c7',
+                'border-color': '#38bdf8',
+                'border-width': 2,
+                'width': 38, 'height': 38
               }
             },
             {
               selector: 'node[type = "firewall"]',
               style: {
-                'background-color': '#9f1239',
-                'border-color': '#f43f5e',
-                'width': 40,
-                'height': 40
+                'shape': 'octagon',
+                'background-color': '#e11d48',
+                'border-color': '#fb7185',
+                'border-width': 2.5,
+                'width': 44, 'height': 44
               }
             },
             {
+              selector: 'node[type = "storage"]',
+              style: {
+                'shape': 'barrel',
+                'background-color': '#d97706',
+                'border-color': '#fbbf24',
+                'border-width': 2,
+                'width': 40, 'height': 40
+              }
+            },
+            {
+              selector: 'node[type = "server"]',
+              style: {
+                'shape': 'round-rectangle',
+                'background-color': '#4f46e5',
+                'border-color': '#818cf8',
+                'border-width': 2,
+                'width': 42, 'height': 42
+              }
+            },
+            {
+              selector: 'node[type = "cloud_service"]',
+              style: {
+                'shape': 'hexagon',
+                'background-color': '#0891b2',
+                'border-color': '#22d3ee',
+                'border-width': 2,
+                'width': 40, 'height': 40
+              }
+            },
+            {
+              selector: 'node[type = "data_asset"]',
+              style: {
+                'shape': 'rhomboid',
+                'background-color': '#b45309',
+                'border-color': '#fcd34d',
+                'border-width': 2,
+                'width': 36, 'height': 36
+              }
+            },
+            // XAI Tree Specific Styles
+            {
+              selector: 'node[type = "query"]',
+              style: {
+                'background-color': '#059669',
+                'border-color': '#34d399',
+                'width': 48, 'height': 48, 'font-size': '11px'
+              }
+            },
+            {
+              selector: 'node[type = "family"]',
+              style: {
+                'background-color': '#7c3aed',
+                'border-color': '#c084fc',
+                'width': 42, 'height': 42
+              }
+            },
+            {
+              selector: 'node[status = "MET"]',
+              style: {
+                'background-color': '#065f46',
+                'border-color': '#10b981',
+                'border-width': 2.5
+              }
+            },
+            {
+              selector: 'node[status = "UNMET"]',
+              style: {
+                'background-color': '#881337',
+                'border-color': '#f43f5e',
+                'border-width': 2.5
+              }
+            },
+            {
+              selector: 'node[status = "INSUFFICIENT_DATA"]',
+              style: {
+                'background-color': '#78350f',
+                'border-color': '#f59e0b',
+                'border-width': 2
+              }
+            },
+            // Edge Styles
+            {
               selector: 'edge',
               style: {
-                'width': 2,
-                'line-color': '#334155',
-                'target-arrow-color': '#38bdf8',
+                'width': 1.5,
+                'line-color': '#475569',
+                'target-arrow-color': '#475569',
                 'target-arrow-shape': 'triangle',
-                'arrow-scale': 1.2,
                 'curve-style': 'bezier',
-                'label': 'data(label)',
-                'color': '#94a3b8',
-                'font-size': '9px',
+                'font-size': '8px',
                 'font-family': 'Inter, sans-serif',
-                'text-background-color': '#090d16',
-                'text-background-opacity': 0.9,
-                'text-background-padding': '2px',
+                'color': '#94a3b8',
+                'text-background-color': '#080c14',
+                'text-background-opacity': 0.85,
+                'text-background-padding': '1px',
                 'text-rotation': 'autorotate'
               }
             },
             {
-              selector: 'node.highlighted',
+              selector: 'edge[is_encrypted = true]',
               style: {
-                'background-color': '#d97706',
-                'border-color': '#fef08a',
-                'border-width': 4,
-                'width': 54,
-                'height': 54,
-                'color': '#fef08a',
-                'font-weight': 'bold',
-                'z-index': 999
+                'line-color': '#10b981',
+                'target-arrow-color': '#10b981',
+                'width': 2
               }
             },
             {
-              selector: 'edge.highlighted',
+              selector: ':selected',
               style: {
-                'line-color': '#f59e0b',
-                'target-arrow-color': '#f59e0b',
-                'width': 4,
-                'z-index': 999
+                'border-width': 3.5,
+                'border-color': '#38bdf8',
+                'shadow-blur': 10,
+                'shadow-color': '#0284c7',
+                'shadow-opacity': 0.8
               }
             }
           ],
-          layout: isGraphRAG ? {
-            name: 'breadthfirst',
-            directed: true,
-            padding: 40,
-            spacingFactor: 1.3, // Tighter horizontal spacing for GraphRAG multi-hop traces
-            avoidOverlap: true,
-            nodeDimensionsIncludeLabels: true,
-            roots: 'node[type = "query"]'
-          } : {
-            name: 'breadthfirst',
-            directed: true,
-            padding: 40,
-            spacingFactor: 1.8, // Wider spacing for dense network topologies
-            avoidOverlap: true,
-            nodeDimensionsIncludeLabels: true,
-            roots: 'node[type = "cloud_service"], node[type = "firewall"], node[type = "subnet"]'
-          }
+          layout: layoutConfig
         });
 
-        cy.ready(() => {
-          cy.resize();
-          cy.fit(35);
-        });
+        const fitGraphCleanly = (cyInstance) => {
+          if (!cyInstance) return;
+          const nodeCount = cyInstance.nodes().length;
+          if (nodeCount === 0) return;
+          if (nodeCount <= 2) {
+            cyInstance.center();
+            cyInstance.zoom(1.0); // Never over-zoom single or two devices
+          } else {
+            cyInstance.fit(null, 30);
+            if (cyInstance.zoom() > 1.05) {
+              cyInstance.zoom(1.0);
+              cyInstance.center();
+            }
+          }
+        };
 
         cy.on('tap', 'node', (evt) => {
           const nodeData = evt.target.data();
           if (onNodeSelect) onNodeSelect(nodeData);
+        });
 
-          // Tap animation & focus
-          cy.animate({
-            center: { eles: evt.target },
-            zoom: 1.3,
-            duration: 350
-          });
+        cy.ready(() => {
+          fitGraphCleanly(cy);
         });
 
         cyRef.current = cy;
 
-        const observer = new ResizeObserver(() => {
-          if (cyRef.current) {
-            cyRef.current.resize();
-          }
-        });
-        if (containerRef.current) observer.observe(containerRef.current);
+        const handleResize = () => {
+          if (cyRef.current) fitGraphCleanly(cyRef.current);
+        };
+        window.addEventListener('resize', handleResize);
 
         return () => {
-          observer.disconnect();
+          window.removeEventListener('resize', handleResize);
           cy.destroy();
         };
-      }, [graphData]);
+      }, [graphData, activeTab, currentLayoutName, xaiFamilyFilter]);
 
-      useEffect(() => {
-        if (!cyRef.current || !highlightControlId) return;
-        const cy = cyRef.current;
-
-        cy.nodes().removeClass('highlighted');
-        cy.edges().removeClass('highlighted');
-
-        const targetId = `Ctrl_${highlightControlId}`;
-        const ctrlNode = cy.getElementById(targetId);
-
-        if (ctrlNode && ctrlNode.length > 0) {
-          const neighborhood = ctrlNode.closedNeighborhood();
-          neighborhood.addClass('highlighted');
-
-          if (onNodeSelect) {
-            onNodeSelect(ctrlNode.data());
+      const handleFit = () => {
+        if (!cyRef.current) return;
+        const nodeCount = cyRef.current.nodes().length;
+        if (nodeCount <= 2) {
+          cyRef.current.center();
+          cyRef.current.zoom(1.0);
+        } else {
+          cyRef.current.fit(null, 30);
+          if (cyRef.current.zoom() > 1.05) {
+            cyRef.current.zoom(1.0);
+            cyRef.current.center();
           }
-
-          cy.animate({
-            fit: { eles: neighborhood, padding: 60 },
-            duration: 450
-          });
         }
-      }, [highlightControlId]);
+      };
+      const handleZoomIn = () => cyRef.current && cyRef.current.zoom(cyRef.current.zoom() * 1.25);
+      const handleZoomOut = () => cyRef.current && cyRef.current.zoom(cyRef.current.zoom() * 0.8);
 
       return (
-        <div className="w-full h-[310px] relative rounded-lg bg-slate-950 border border-slate-800 overflow-hidden">
-          <div ref={containerRef} className="w-full h-full" />
-          {highlightControlId && (
-            <div className="absolute top-3 right-3 bg-amber-950/90 text-amber-300 border border-amber-700 text-xs px-3 py-1.5 rounded-md font-mono animate-pulse">
-              🔍 Focused Path: Control {highlightControlId}
-            </div>
-          )}
+        <div className="relative w-full h-full bg-slate-950/70 rounded-xl overflow-hidden border border-slate-800 flex flex-col">
+          <div ref={containerRef} className="w-full flex-1" />
+          
+          {/* Top-Right Canvas Controls: Layout Switcher + Zoom */}
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-slate-900/90 backdrop-blur border border-slate-700/80 rounded-lg p-1 shadow-lg z-10">
+            <select
+              value={currentLayoutName}
+              onChange={(e) => setCurrentLayoutName(e.target.value)}
+              className="bg-slate-800 text-slate-200 text-[11px] font-semibold px-2 py-0.5 rounded border border-slate-700 focus:outline-none cursor-pointer"
+              title="Change Graph Layout"
+            >
+              <option value="dagre">Clean Flow (Hierarchical)</option>
+              <option value="concentric">Concentric Rings</option>
+              <option value="cose">Organic (Force)</option>
+            </select>
+
+            <button onClick={handleFit} className="px-2 py-0.5 text-[11px] text-slate-300 hover:text-white hover:bg-slate-800 rounded transition font-medium" title="Auto-Fit">Auto-Fit</button>
+            <button onClick={handleZoomIn} className="w-6 h-6 flex items-center justify-center text-xs text-slate-300 hover:text-white hover:bg-slate-800 rounded transition font-bold" title="Zoom In">+</button>
+            <button onClick={handleZoomOut} className="w-6 h-6 flex items-center justify-center text-xs text-slate-300 hover:text-white hover:bg-slate-800 rounded transition font-bold" title="Zoom Out">-</button>
+          </div>
+
+          {/* Bottom-Left Legend */}
+          <div className="absolute bottom-2.5 left-2.5 bg-slate-900/85 backdrop-blur border border-slate-800 rounded-lg px-2.5 py-1 text-[10px] text-slate-300 flex items-center gap-3">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> Confirmed / Met</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400"></span> Needs Info</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-rose-400"></span> Unmet Gap</span>
+          </div>
         </div>
       );
     }
 
+    // --- Main App Component ---
     function App() {
-      const [viewMode, setViewMode] = useState('welcome'); // 'welcome' or 'app'
-      const [tab, setTab] = useState('engine1');
-      const [query, setQuery] = useState('');
-      const [messages, setMessages] = useState([
-        { sender: 'bot', text: 'Welcome to **GaRC (GraphRAG Compliance Assistant)**!\n\nAsk me how to protect CUI, audit your network topology, or enforce NIST SP 800-171 Rev 3 controls.' }
-      ]);
-      const [activeGraph, setActiveGraph] = useState(null);
+      const [templates, setTemplates] = useState([]);
+      const [selectedTemplate, setSelectedTemplate] = useState("clinic");
+      const [topologyResult, setTopologyResult] = useState(null);
+      const [auditResult, setAuditResult] = useState(null);
       const [selectedNode, setSelectedNode] = useState(null);
-      const [highlightedControlId, setHighlightedControlId] = useState(null);
-      const [topoText, setTopoText] = useState('We have 10 Windows 11 PCs on 192.168.1.0/24 connected to a Synology NAS storing payroll contracts and CUI.');
-      const [topoResult, setTopoResult] = useState(null);
-      const [scorecard, setScorecard] = useState(null);
+      const [activeCanvasTab, setActiveCanvasTab] = useState("network"); // "network" | "xai"
+      const [selectedFamilyFilter, setSelectedFamilyFilter] = useState("ALL");
+      const [promptText, setPromptText] = useState("");
       const [loading, setLoading] = useState(false);
-      const [topoStep, setTopoStep] = useState('');
-      const [commitMsg, setCommitMsg] = useState('');
-      const [leftWidth, setLeftWidth] = useState(55);
-      const isDraggingRef = useRef(false);
+      const [auditPending, setAuditPending] = useState(true); // Flag indicating audit is needed
+      const [notification, setNotification] = useState(null);
+      const [showReportModal, setShowReportModal] = useState(false);
+      const [reportOrgName, setReportOrgName] = useState("St. Jude Community Health Clinic");
+      const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
+      const [newDeviceType, setNewDeviceType] = useState("device");
+      const [newDeviceName, setNewDeviceName] = useState("");
+      const [newDeviceSubnet, setNewDeviceSubnet] = useState("");
 
-      const handleMouseDown = (e) => {
-        isDraggingRef.current = true;
-        document.body.style.userSelect = 'none';
+      // Notify helper
+      const showToast = (msg, type = "success") => {
+        setNotification({ msg, type });
+        setTimeout(() => setNotification(null), 3000);
       };
 
+      // Load initial templates and default to clinic
       useEffect(() => {
-        const handleMouseMove = (e) => {
-          if (!isDraggingRef.current) return;
-          const container = document.getElementById('split-container');
-          if (!container) return;
-          const rect = container.getBoundingClientRect();
-          const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
-          if (newWidth >= 25 && newWidth <= 75) {
-            setLeftWidth(newWidth);
+        fetch("/api/templates")
+          .then(res => res.json())
+          .then(data => {
+            setTemplates(data);
+            handleLoadTemplate("clinic", false);
+          })
+          .catch(err => {
+            console.error("Failed to load templates:", err);
+            handleLoadTemplate("clinic", false);
+          });
+      }, []);
+
+      // Load template action (with option to run audit)
+      const handleLoadTemplate = async (templateId, runAuditImmediately = false) => {
+        setLoading(true);
+        setSelectedTemplate(templateId);
+        try {
+          const res = await fetch(`/api/templates/load/${templateId}`, { method: "POST" });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          setSelectedNode(null);
+          setAuditPending(true);
+          if (runAuditImmediately) {
+            await handleRunAudit();
           }
-        };
-
-        const handleMouseUp = () => {
-          isDraggingRef.current = false;
-          document.body.style.userSelect = '';
-        };
-
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
-        return () => {
-          window.removeEventListener('mousemove', handleMouseMove);
-          window.removeEventListener('mouseup', handleMouseUp);
-        };
-      }, []);
-
-      useEffect(() => {
-        fetchScorecard();
-      }, []);
-
-      const fetchScorecard = async () => {
-        try {
-          const r = await fetch('/api/nist-scorecard');
-          const d = await r.json();
-          setScorecard(d);
-        } catch (e) {}
-      };
-
-      const handleAsk = async (e) => {
-        e.preventDefault();
-        if (!query.trim() || loading) return;
-        const q = query;
-        setQuery('');
-        setMessages(prev => [...prev, { sender: 'user', text: q }]);
-        setLoading(true);
-
-        try {
-          const res = await fetch('/api/engine1/query', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q })
-          });
-          const data = await res.json();
-          setMessages(prev => [...prev, { sender: 'bot', text: data.markdown_response, graph: data.graph, cited: data.cited_controls }]);
-          if (data.graph) setActiveGraph(data.graph);
-        } catch (err) {
-          setMessages(prev => [...prev, { sender: 'bot', text: '⚠️ Error reaching Engine 1 API.' }]);
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      const handleChatClick = (e, msgGraph) => {
-        const link = e.target.closest('a[href^="#trace-"]');
-        if (link) {
-          e.preventDefault();
-          const href = link.getAttribute('href');
-          const ctrlId = href.replace('#trace-', '');
-          if (msgGraph) setActiveGraph(msgGraph);
-          setHighlightedControlId(ctrlId);
-        }
-      };
-
-      const handleParseTopo = async () => {
-        if (!topoText.trim() || loading) return;
-        setLoading(true);
-        setTopoStep('⚡ Extracting network entities & subnets...');
-        
-        // Artificial delay for smooth UX progress banner (Engine 2 is so fast it finishes in 10ms!)
-        await new Promise(r => setTimeout(r, 450));
-        
-        try {
-          const res = await fetch('/api/engine2/parse-topology', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: topoText })
-          });
-          
-          setTopoStep('🛡️ Evaluating MFA & CUI security attributes...');
-          await new Promise(r => setTimeout(r, 450));
-          
-          const data = await res.json();
-          setTopoResult(data);
-          fetchScorecard();
-        } catch (err) {
-          alert('Error parsing topology.');
-        } finally {
-          setLoading(false);
-          setTopoStep('');
-        }
-      };
-
-      const handleCommitTopo = async () => {
-        if (!topoResult) return;
-        setLoading(true);
-        try {
-          const res = await fetch('/api/engine2/commit-topology', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nodes: topoResult.nodes, edges: topoResult.edges })
-          });
-          const data = await res.json();
-          setCommitMsg('✅ Topology successfully persisted to Neo4j database!');
-          fetchScorecard();
-        } catch (err) {
-          setCommitMsg('❌ Error committing topology.');
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      const seedKG = async () => {
-        try {
-          const res = await fetch('/api/seed', { method: 'POST' });
-          const data = await res.json();
-          alert(`NIST 800-171 Rev 3 CPRT Graph Loaded! Total Controls: ${data.count}`);
+          showToast(`Loaded ${templateId.toUpperCase()} template! Click 'Run Audit' when ready.`);
         } catch (e) {
-          alert('Error seeding KG.');
+          console.error(e);
+        } finally {
+          setLoading(false);
         }
       };
+
+      // Clear Workspace (Empty Canvas)
+      const handleClearWorkspace = async () => {
+        setLoading(true);
+        setSelectedTemplate("custom");
+        try {
+          const res = await fetch("/api/topology/clear", { method: "POST" });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          setSelectedNode(null);
+          setAuditResult(null);
+          setAuditPending(false);
+          showToast("Workspace cleared. Ready for custom setup!");
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Explicit User-Triggered Compliance Audit
+      const handleRunAudit = async () => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/audit/evaluate-topology", { method: "POST" });
+          const audit = await res.json();
+          setAuditResult(audit);
+          setAuditPending(false);
+          showToast("NIST SP 800-171 Audit Completed!");
+        } catch (e) {
+          console.error("Audit error:", e);
+          showToast("Audit evaluation failed.", "error");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Natural language prompt parsing
+      const handleParsePrompt = async (e) => {
+        e?.preventDefault();
+        if (!promptText.trim()) return;
+        setLoading(true);
+        try {
+          const res = await fetch("/api/engine2/parse-topology", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: promptText })
+          });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          setSelectedNode(null);
+          setSelectedTemplate("custom");
+          setAuditPending(true);
+          showToast("Network topology built! Click 'Run Audit' to evaluate.");
+        } catch (e) {
+          console.error(e);
+          showToast("Failed to parse network prompt", "error");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Resolve a clarification question
+      const handleAnswerClarification = async (nodeId, propName, answerValue) => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/topology/answer-clarification", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              node_id: nodeId,
+              property_name: propName,
+              value: answerValue
+            })
+          });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          setAuditPending(true);
+          showToast("Clarification saved. Click 'Run Audit' to re-score.");
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Toggle node attributes directly (CUI, MFA, Encryption)
+      const handleToggleNodeProp = async (nodeId, propName, currentValue) => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/topology/update-node", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              node_id: nodeId,
+              updates: { [propName]: !currentValue }
+            })
+          });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          if (selectedNode && selectedNode.id === nodeId) {
+            setSelectedNode({ ...selectedNode, [propName]: !currentValue });
+          }
+          setAuditPending(true);
+          showToast(`Updated ${propName}! Click 'Run Audit' to re-score.`);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Assign node to a subnet
+      const handleAssignSubnet = async (nodeId, targetSubnetId) => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/topology/update-node", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              node_id: nodeId,
+              updates: { subnet_id: targetSubnetId }
+            })
+          });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          if (selectedNode && selectedNode.id === nodeId) {
+            setSelectedNode({ ...selectedNode, parent: targetSubnetId });
+          }
+          setAuditPending(true);
+          showToast(`Device moved to subnet!`);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Delete Node
+      const handleDeleteNode = async (nodeId) => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/topology/delete-node", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ node_id: nodeId })
+          });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          setSelectedNode(null);
+          setAuditPending(true);
+          showToast("Device deleted. Click 'Run Audit' to re-score.");
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Add New Device from Palette
+      const handleAddDevice = async () => {
+        if (!newDeviceName.trim()) return;
+        setLoading(true);
+        const newId = "dev_" + Date.now().toString().slice(-4);
+        try {
+          const res = await fetch("/api/topology/add-node", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: newId,
+              name: newDeviceName.trim(),
+              type: newDeviceType,
+              ip_or_subnet: "192.168.1.x",
+              os_or_system: "Standard OS",
+              stores_cui: false,
+              has_firewall_or_mfa: false,
+              subnet_id: newDeviceSubnet || undefined
+            })
+          });
+          const topo = await res.json();
+          setTopologyResult(topo);
+          setShowAddDeviceModal(false);
+          setNewDeviceName("");
+          setNewDeviceSubnet("");
+          setAuditPending(true);
+          showToast(`Added ${newDeviceName}! Click 'Run Audit' to evaluate.`);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Compute graph data for Cytoscape depending on active tab
+      const currentGraphData = activeCanvasTab === "network" 
+        ? topologyResult?.cytoscape_graph 
+        : auditResult?.cytoscape_graph;
+
+      // Extract all active subnets for assignment dropdown
+      const activeSubnets = topologyResult?.nodes?.filter(n => n.type === "subnet") || [];
 
       return (
-        <div className="min-h-screen p-6 max-w-[1500px] mx-auto space-y-6">
-          {/* Header */}
-          <header className="glass-panel p-5 flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              {viewMode === 'app' && (
-                <button
-                  onClick={() => setViewMode('welcome')}
-                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs transition"
-                >
-                  ← Home
-                </button>
-              )}
-              <div>
-                <div className="flex items-center space-x-2">
-                  <h1 className="text-2xl font-bold text-cyan-400">GaRC</h1>
-                  <span className="text-xs px-2.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-mono">
-                    CPRT Compliance Platform
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400">GraphRAG Compliance Reasoning & Topology Mapping for NIST SP 800-171 Rev 3</p>
+        <div className="h-full flex flex-col overflow-hidden">
+          {/* --- Notification Toast --- */}
+          {notification && (
+            <div className="fixed top-3 right-3 z-50 flex items-center gap-2 px-3.5 py-2 rounded-lg shadow-xl text-xs font-semibold bg-emerald-600 text-white animate-fade-in">
+              <span>{notification.msg}</span>
+            </div>
+          )}
+
+          {/* --- Header Banner --- */}
+          <header className="h-13 min-h-[52px] border-b border-slate-800 bg-slate-950/90 backdrop-blur px-4 py-2 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center font-black text-sm text-white shadow-md shadow-cyan-900/30">
+                G
+              </div>
+              <div className="flex items-center gap-2">
+                <h1 className="font-bold text-sm text-slate-100 tracking-tight">GaRC</h1>
+                <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/60">
+                  NIST SP 800-171 Rev 3
+                </span>
+                <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60">
+                  Fast In-Memory
+                </span>
               </div>
             </div>
 
-            <div className="flex items-center space-x-3 text-xs">
-              {topoResult?.nodes?.length > 0 ? (
-                <button
-                  onClick={() => { setViewMode('app'); setTab('engine2'); }}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-700 text-emerald-300 font-mono flex items-center space-x-1.5 hover:bg-emerald-900 transition"
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>Active Topology: {topoResult.nodes.length} Devices</span>
-                </button>
-              ) : (
-                <span className="px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-slate-400 font-mono">
-                  Topology: Unmapped
-                </span>
-              )}
+            {/* Quick Actions & Export */}
+            <div className="flex items-center gap-2">
               <button
-                onClick={seedKG}
-                className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
+                onClick={handleClearWorkspace}
+                className="px-2.5 py-1 text-xs font-medium text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 rounded-md border border-slate-800 transition"
+                title="Start from a blank canvas"
               >
-                Reload Seed KG
+                Clear Workspace
+              </button>
+
+              <button
+                onClick={() => setShowReportModal(true)}
+                className="flex items-center gap-1.5 bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white text-xs font-semibold px-3 py-1 rounded-md shadow transition"
+              >
+                Export Report
               </button>
             </div>
           </header>
 
-          {/* Welcome / Mode Selection Landing Screen */}
-          {viewMode === 'welcome' && (
-            <div className="py-8 space-y-8 max-w-4xl mx-auto">
-              <div className="text-center space-y-3">
-                <h2 className="text-3xl font-extrabold text-slate-100">Welcome to GaRC Compliance Platform</h2>
-                <p className="text-slate-400 max-w-xl mx-auto text-sm leading-relaxed">
-                  Select how you would like to begin evaluating your organization's cybersecurity compliance under NIST SP 800-171 Rev 3:
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-                {/* Option 1: Map Network Topology First */}
-                <div
-                  onClick={() => { setViewMode('app'); setTab('engine2'); }}
-                  className="glass-panel p-6 rounded-2xl border-2 border-purple-500/40 hover:border-purple-500 bg-slate-900/80 hover:bg-slate-900 transition cursor-pointer flex flex-col justify-between space-y-6 group shadow-lg hover:shadow-purple-500/10"
-                >
-                  <div className="space-y-3">
-                    <div className="w-12 h-12 rounded-xl bg-purple-950 border border-purple-800 text-purple-300 flex items-center justify-center text-2xl">
-                      🗺️
-                    </div>
-                    <div className="inline-block px-2.5 py-0.5 rounded bg-purple-950 text-purple-300 text-[11px] font-medium border border-purple-800/80">
-                      Recommended First Step
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-100 group-hover:text-purple-300 transition">
-                      Map Network Topology First
-                    </h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Describe your PCs, NAS storage, VPNs, subnets, and CUI assets in plain text. GaRC will extract your network nodes, security flags (MFA, encryption), and automatically map them to NIST controls.
-                    </p>
-                  </div>
-                  <button className="w-full py-2.5 rounded-xl bg-purple-600 group-hover:bg-purple-500 text-white font-medium text-xs transition flex items-center justify-center space-x-2">
-                    <span>Map Topology & Audit Setup</span>
-                    <span>→</span>
+          {/* --- Main 3-Column Compact Responsive Layout --- */}
+          <main className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-3 p-3 w-full">
+            
+            {/* ============================================================ */}
+            {/* LEFT COLUMN: Presets, Palette & Device Inspector (3 cols) */}
+            {/* ============================================================ */}
+            <section className="lg:col-span-3 h-full overflow-y-auto custom-scroll flex flex-col gap-3 pr-1">
+              
+              {/* Step 1: Quick Templates Card */}
+              <div className="glass-card rounded-xl p-3 shadow-sm shrink-0">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-[11px] font-bold uppercase tracking-wider text-cyan-400">
+                    1. Choose Network Preset
+                  </h2>
+                  <button
+                    onClick={handleClearWorkspace}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 font-medium"
+                  >
+                    Clear All
                   </button>
                 </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => handleLoadTemplate("clinic")}
+                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                      selectedTemplate === "clinic"
+                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
+                    }`}
+                  >
+                    <span className="text-xs font-semibold">Clinic / Dental</span>
+                    <span className="text-[9px] text-slate-400 leading-tight">Patient EHR, Wi-Fi</span>
+                  </button>
 
-                {/* Option 2: Direct GraphRAG Chat */}
-                <div
-                  onClick={() => { setViewMode('app'); setTab('engine1'); }}
-                  className="glass-panel p-6 rounded-2xl border border-slate-800 hover:border-cyan-500/50 bg-slate-900/60 hover:bg-slate-900 transition cursor-pointer flex flex-col justify-between space-y-6 group"
-                >
-                  <div className="space-y-3">
-                    <div className="w-12 h-12 rounded-xl bg-cyan-950 border border-cyan-800 text-cyan-300 flex items-center justify-center text-2xl">
-                      💬
-                    </div>
-                    <div className="inline-block px-2.5 py-0.5 rounded bg-cyan-950 text-cyan-300 text-[11px] font-medium border border-cyan-800/80">
-                      Direct Assistant Access
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-100 group-hover:text-cyan-300 transition">
-                      Skip to Compliance Assistant
-                    </h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Ask direct NIST SP 800-171 Rev 3 compliance questions, query specific controls, or audit default setups directly with the GraphRAG reasoning engine.
-                    </p>
-                  </div>
-                  <button className="w-full py-2.5 rounded-xl bg-slate-800 group-hover:bg-cyan-600 text-slate-200 group-hover:text-white font-medium text-xs transition flex items-center justify-center space-x-2">
-                    <span>Open Compliance Assistant</span>
-                    <span>→</span>
+                  <button
+                    onClick={() => handleLoadTemplate("law_firm")}
+                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                      selectedTemplate === "law_firm"
+                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
+                    }`}
+                  >
+                    <span className="text-xs font-semibold">Law / CPA Firm</span>
+                    <span className="text-[9px] text-slate-400 leading-tight">Tax CUI, VPN Gate</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleLoadTemplate("subcontractor")}
+                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                      selectedTemplate === "subcontractor"
+                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
+                    }`}
+                  >
+                    <span className="text-xs font-semibold">Defense / CNC</span>
+                    <span className="text-[9px] text-slate-400 leading-tight">CAD Vault, DoD CUI</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleLoadTemplate("nonprofit")}
+                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                      selectedTemplate === "nonprofit"
+                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
+                    }`}
+                  >
+                    <span className="text-xs font-semibold">Non-Profit</span>
+                    <span className="text-[9px] text-slate-400 leading-tight">M365, Donor CUI</span>
                   </button>
                 </div>
               </div>
-            </div>
-          )}
 
-          {/* Application Views */}
-          {viewMode === 'app' && (
-            <>
-              {/* Workflow Stepper Navigation Tabs */}
-              <div className="flex items-center space-x-2 border-b border-slate-800 pb-3 overflow-x-auto text-sm font-medium">
-                {/* Step 1: Network Topology */}
-                <button
-                  onClick={() => setTab('engine2')}
-                  className={`px-4 py-2 rounded-xl flex items-center space-x-2 transition ${tab === 'engine2' ? 'bg-purple-600/30 text-purple-300 border border-purple-500/60 shadow-lg shadow-purple-500/10' : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'}`}
-                >
-                  <span className="w-5 h-5 rounded-full bg-purple-950 text-purple-300 border border-purple-800 text-xs flex items-center justify-center font-bold font-mono">1</span>
-                  <span>🗺️ Network Topology</span>
-                </button>
-
-                <span className="text-slate-600 font-bold px-1">→</span>
-
-                {/* Step 2: Compliance Assistant */}
-                <button
-                  onClick={() => setTab('engine1')}
-                  className={`px-4 py-2 rounded-xl flex items-center space-x-2 transition ${tab === 'engine1' ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/60 shadow-lg shadow-cyan-500/10' : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'}`}
-                >
-                  <span className="w-5 h-5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 text-xs flex items-center justify-center font-bold font-mono">2</span>
-                  <span>💬 Compliance Assistant (GraphRAG)</span>
-                </button>
-
-                <span className="text-slate-600 font-bold px-1">→</span>
-
-                {/* Step 3: Gap Scorecard */}
-                <button
-                  onClick={() => setTab('scorecard')}
-                  className={`px-4 py-2 rounded-xl flex items-center space-x-2 transition ${tab === 'scorecard' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/60 shadow-lg shadow-emerald-500/10' : 'bg-slate-900/60 text-slate-400 border border-slate-800 hover:text-slate-200'}`}
-                >
-                  <span className="w-5 h-5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs flex items-center justify-center font-bold font-mono">3</span>
-                  <span>📊 NIST 800-171 Gap Scorecard</span>
-                </button>
-              </div>
-
-          {/* Tab 1: Engine 1 Chat with Resizable Split Pane Handle */}
-          {tab === 'engine1' && (
-            <div id="split-container" className="flex flex-col lg:flex-row gap-3 h-[760px] relative">
-              {/* Left Chat Column */}
-              <div style={{ width: `${leftWidth}%` }} className="glass-panel p-4 flex flex-col h-full shrink-0 min-w-[280px]">
-                <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-                  {messages.map((m, i) => (
-                    <div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div
-                        onClick={(e) => handleChatClick(e, m.graph)}
-                        className={`max-w-[88%] p-4 rounded-xl text-sm ${m.sender === 'user' ? 'bg-cyan-600 text-white' : 'bg-slate-900/90 border border-slate-800 text-slate-200'}`}
-                      >
-                        <div
-                          className="prose-custom"
-                          dangerouslySetInnerHTML={{ __html: marked.parse(m.text) }}
-                        />
-                        {m.cited?.length > 0 && (
-                          <div className="mt-4 pt-3 border-t border-slate-800 flex flex-wrap gap-2 items-center text-xs">
-                            <span className="text-slate-400 font-medium">Interactive XAI Traces:</span>
-                            {m.cited.map((ctrlId, cIdx) => (
-                              <button
-                                key={cIdx}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (m.graph) setActiveGraph(m.graph);
-                                  setHighlightedControlId(ctrlId);
-                                }}
-                                className="px-2.5 py-1 rounded bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-700/80 transition flex items-center space-x-1 font-mono"
-                              >
-                                <span>🔍 Trace {ctrlId}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
+              {/* Add Devices Palette Toolbar */}
+              <div className="glass-card rounded-xl p-3 shadow-sm shrink-0">
+                <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-2">
+                  Add Device / Subnet
+                </h2>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    { type: "device", label: "Workstation" },
+                    { type: "firewall", label: "Firewall" },
+                    { type: "storage", label: "NAS / Vault" },
+                    { type: "server", label: "Server" },
+                    { type: "cloud_service", label: "Cloud/VPN" },
+                    { type: "subnet", label: "Subnet / VLAN" },
+                  ].map(d => (
+                    <button
+                      key={d.type}
+                      onClick={() => {
+                        setNewDeviceType(d.type);
+                        setNewDeviceName(`New ${d.label}`);
+                        setNewDeviceSubnet(activeSubnets[0]?.id || "");
+                        setShowAddDeviceModal(true);
+                      }}
+                      className="p-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition flex flex-col items-center gap-0.5 text-[10px] font-medium"
+                    >
+                      <span>{d.label}</span>
+                    </button>
                   ))}
-                  {loading && <div className="text-xs text-cyan-400 animate-pulse">Traversing Knowledge Graph & generating XAI trace...</div>}
                 </div>
-                <form onSubmit={handleAsk} className="pt-3 flex space-x-2">
-                  <input
-                    type="text"
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                    placeholder="e.g. How do I protect CUI stored on NAS under NIST 800-171?"
-                    className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-cyan-500"
-                  />
-                  <button type="submit" disabled={loading} className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium">
-                    Ask
-                  </button>
-                </form>
               </div>
 
-              {/* Draggable Resizer Handle */}
-              <div
-                onMouseDown={handleMouseDown}
-                className="hidden lg:flex w-2.5 hover:w-3.5 cursor-col-resize bg-slate-800/80 hover:bg-cyan-500 border border-slate-700/60 hover:border-cyan-400 rounded-full transition-all items-center justify-center shrink-0 my-2 shadow-lg group"
-                title="Drag left or right to customize Chat & Graph panel sizes"
-              >
-                <div className="w-1 h-8 bg-slate-500 group-hover:bg-white rounded-full transition-colors" />
-              </div>
-
-              {/* Right Visualizer Column with Ergonomic Compact Graph & Expanded Explanation Window */}
-              <div style={{ width: `${100 - leftWidth}%` }} className="glass-panel p-4 flex flex-col h-full space-y-3 shrink-0 min-w-[280px]">
-                <div className="flex justify-between items-center shrink-0">
-                  <h3 className="text-sm font-semibold text-slate-200">Live Multi-Hop Graph Reasoning Path</h3>
-                  {highlightedControlId && (
+              {/* Selected Node Inspector & Subnet Assignment */}
+              {selectedNode ? (
+                <div className="glass-card rounded-xl p-3 border-cyan-800/60 bg-cyan-950/20 shadow-md shrink-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-100">{selectedNode.label?.split('\n')[0] || selectedNode.id}</h3>
+                      <span className="text-[9px] text-cyan-400 font-mono">Type: {selectedNode.type?.toUpperCase()}</span>
+                    </div>
                     <button
-                      onClick={() => setHighlightedControlId(null)}
-                      className="text-xs text-slate-400 hover:text-slate-200"
+                      onClick={() => handleDeleteNode(selectedNode.id)}
+                      className="text-xs text-white bg-rose-700 hover:bg-rose-600 px-2.5 py-1 rounded font-semibold transition"
+                      title="Delete this workstation/device"
                     >
-                      Reset Focus
+                      Delete Device
                     </button>
-                  )}
-                </div>
-
-                {/* Compact Graph Window */}
-                <div className="h-[310px] shrink-0">
-                  <GraphVisualizer
-                    graphData={activeGraph || messages[messages.length - 1]?.graph}
-                    onNodeSelect={setSelectedNode}
-                    highlightControlId={highlightedControlId}
-                  />
-                </div>
-
-                {/* Ergonomic Expanded Node Explanation Window */}
-                <div className="flex-1 overflow-y-auto min-h-[260px] pr-1">
-                  {selectedNode ? (
-                    <div className="p-4 rounded-xl bg-slate-900/90 border border-cyan-500/60 shadow-xl space-y-2.5 text-xs animate-in fade-in slide-in-from-bottom-2">
-                      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-mono text-cyan-300 font-bold text-sm">{selectedNode.label}</span>
-                          <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] uppercase font-mono">
-                            {selectedNode.type}
-                          </span>
-                        </div>
-                        <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-slate-800">
-                          ✕ Close
-                        </button>
-                      </div>
-
-                      {selectedNode.description && (
-                        <div className="text-slate-200 leading-relaxed pt-1">
-                          <strong className="text-cyan-400">Control Description:</strong>
-                          <p className="mt-1 text-slate-300 bg-slate-950/60 p-2.5 rounded border border-slate-800/80">{selectedNode.description}</p>
-                        </div>
-                      )}
-
-                      {selectedNode.detail && (
-                        <div className="text-slate-300 italic pt-1 bg-slate-950/40 p-2.5 rounded border border-slate-800/60">
-                          "{selectedNode.detail}"
-                        </div>
-                      )}
-
-                      {selectedNode.guidance && (
-                        <div className="p-3 rounded bg-cyan-950/50 border border-cyan-800/80 text-cyan-200 mt-2 space-y-1">
-                          <strong className="text-cyan-400 block font-semibold">Small Business Action:</strong>
-                          <p className="text-slate-200 leading-relaxed">{selectedNode.guidance}</p>
-                        </div>
-                      )}
-
-                      {selectedNode.details && (
-                        <div className="text-slate-400 font-mono text-[11px] pt-1 bg-slate-950 p-2 rounded border border-slate-800">
-                          {selectedNode.details}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="h-full flex items-center justify-center p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 text-center text-xs text-slate-400">
-                      <div>
-                        <div className="text-cyan-400 font-semibold mb-1 text-sm">🔍 Node Details & XAI Trace</div>
-                        <p className="max-w-xs text-slate-400">Click on any graph node or <span className="text-amber-300 font-mono">[Trace ID]</span> link to view its full description, objectives, and small business guidance here.</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Tab 2: Engine 2 Topology */}
-          {tab === 'engine2' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[720px]">
-              <div className="lg:col-span-6 glass-panel p-4 flex flex-col h-full space-y-4">
-                <h3 className="text-sm font-semibold text-purple-300">Natural Language Network Topology Input</h3>
-                <textarea
-                  rows={4}
-                  value={topoText}
-                  onChange={e => setTopoText(e.target.value)}
-                  placeholder="e.g., We have 10 Windows PCs on 192.168.1.0/24 connected to a Synology NAS storing payroll and CUI..."
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-3 text-sm outline-none focus:border-purple-500"
-                />
-                <button
-                  onClick={handleParseTopo}
-                  disabled={loading}
-                  className="py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition flex items-center justify-center space-x-2"
-                >
-                  <span>{loading ? 'Analyzing Network Topology...' : 'Generate Rigid Topology Draft'}</span>
-                </button>
-
-                {loading && topoStep && (
-                  <div className="p-3 rounded-lg bg-purple-950/70 border border-purple-800 text-purple-300 text-xs flex items-center space-x-2 animate-pulse">
-                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-ping shrink-0" />
-                    <span className="font-mono font-medium">{topoStep}</span>
                   </div>
-                )}
 
-                {topoResult && (
-                  <div className="flex-1 overflow-y-auto space-y-3 pt-3 border-t border-slate-800 text-xs">
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold text-slate-300">Extracted Graph Entities ({topoResult.nodes.length} Nodes)</span>
-                      <span className="font-mono text-purple-400">Confidence: {(topoResult.confidence_score*100).toFixed(0)}%</span>
-                    </div>
-
-                    {/* Clarification Cards */}
-                    {topoResult.clarification_prompts?.length > 0 && (
-                      <div className="p-3 rounded bg-amber-950/40 border border-amber-800/60 space-y-2">
-                        <div className="text-amber-400 font-medium">Clarification Required:</div>
-                        {topoResult.clarification_prompts.map((cp, idx) => (
-                          <div key={idx} className="p-2 rounded bg-slate-900 border border-slate-800">
-                            <div>{cp.question}</div>
-                            <div className="flex gap-2 mt-1">
-                              {cp.suggested_options.map((opt, oIdx) => (
-                                <button
-                                  key={oIdx}
-                                  onClick={() => {
-                                    const updatedNodes = topoResult.nodes.map(n => n.id === cp.node_id ? { ...n, [cp.property_in_question]: opt.toLowerCase().includes('yes'), confidence: 1.0 } : n);
-                                    const updatedPrompts = topoResult.clarification_prompts.filter(p => p.node_id !== cp.node_id);
-                                    setTopoResult(prev => ({ ...prev, nodes: updatedNodes, clarification_prompts: updatedPrompts }));
-                                    fetchScorecard();
-                                  }}
-                                  className="px-2 py-1 rounded bg-slate-800 hover:bg-amber-900 text-amber-200"
-                                >
-                                  {opt}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
+                  {/* Subnet Assignment Dropdown */}
+                  {selectedNode.type !== "subnet" && (
+                    <div className="mb-2.5">
+                      <label className="text-[10px] text-slate-400 block mb-1">Subnet / VLAN Container:</label>
+                      <select
+                        value={selectedNode.parent || ""}
+                        onChange={(e) => handleAssignSubnet(selectedNode.id, e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs p-1.5 rounded focus:outline-none focus:border-cyan-500"
+                      >
+                        <option value="">(None / Direct Boundary)</option>
+                        {activeSubnets.map(sub => (
+                          <option key={sub.id} value={sub.id}>{sub.name}</option>
                         ))}
-                      </div>
-                    )}
+                      </select>
+                    </div>
+                  )}
 
-                    {topoResult.nodes?.map((n, i) => (
-                      <div key={i} className="p-2.5 rounded bg-slate-900 border border-slate-800 flex justify-between items-center">
-                        <div>
-                          <span className="font-mono text-purple-300">{n.name}</span>
-                          <span className="ml-2 text-[10px] uppercase text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">{n.type}</span>
-                        </div>
-                        <div className="flex gap-1">
-                          {n.stores_cui && <span className="px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 text-[10px]">CUI</span>}
-                          {n.has_firewall_or_mfa && <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px]">Secured</span>}
-                        </div>
+                  {/* 2 Fast Security Toggles */}
+                  <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                    <label className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                      <div className="text-[11px]">
+                        <span className="font-medium text-slate-200">Holds Sensitive / CUI Data</span>
                       </div>
-                    ))}
+                      <input
+                        type="checkbox"
+                        checked={!!selectedNode.stores_cui}
+                        onChange={() => handleToggleNodeProp(selectedNode.id, 'stores_cui', selectedNode.stores_cui)}
+                        className="w-4 h-4 text-cyan-500 rounded border-slate-700 focus:ring-0 cursor-pointer"
+                      />
+                    </label>
 
-                    <button
-                      onClick={handleCommitTopo}
-                      disabled={loading}
-                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-sm font-medium text-white"
-                    >
-                      Persist Approved Topology to Neo4j Database
-                    </button>
-                    {commitMsg && <div className="text-center text-emerald-400">{commitMsg}</div>}
+                    <label className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                      <div className="text-[11px]">
+                        <span className="font-medium text-slate-200">MFA / Firewall Enforced</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={!!selectedNode.has_firewall_or_mfa}
+                        onChange={() => handleToggleNodeProp(selectedNode.id, 'has_firewall_or_mfa', selectedNode.has_firewall_or_mfa)}
+                        className="w-4 h-4 text-emerald-500 rounded border-slate-700 focus:ring-0 cursor-pointer"
+                      />
+                    </label>
                   </div>
-                )}
-              </div>
-
-              <div className="lg:col-span-6 glass-panel p-4 flex flex-col h-full">
-                <h3 className="text-sm font-semibold mb-3 text-slate-200">Generated Network Graph Canvas</h3>
-                <div className="flex-1">
-                  <GraphVisualizer graphData={topoResult?.cytoscape_graph || { nodes: [], edges: [] }} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Tab 3: Gap Scorecard */}
-          {tab === 'scorecard' && scorecard && (
-            <div className="space-y-6">
-              {scorecard.status === 'Unassessed' ? (
-                <div className="glass-panel p-8 text-center space-y-3">
-                  <div className="text-amber-400 text-lg font-semibold">⚠️ Topology Unassessed</div>
-                  <p className="text-sm text-slate-400 max-w-xl mx-auto">{scorecard.message}</p>
-                  <button onClick={() => setTab('engine2')} className="px-5 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium text-white">
-                    Go to Engine 2 to input Network Setup
-                  </button>
                 </div>
               ) : (
-                <div className="space-y-6">
-                  <div className="grid grid-cols-4 gap-4">
-                    <div className="glass-panel p-4">
-                      <span className="text-xs text-slate-400">Compliance Readiness</span>
-                      <div className="text-3xl font-bold text-cyan-400">{scorecard.compliance_score_pct}%</div>
-                    </div>
-                    <div className="glass-panel p-4">
-                      <span className="text-xs text-slate-400">Implemented Controls</span>
-                      <div className="text-3xl font-bold text-emerald-400">{scorecard.implemented_controls}</div>
-                    </div>
-                    <div className="glass-panel p-4">
-                      <span className="text-xs text-slate-400">Partial Controls</span>
-                      <div className="text-3xl font-bold text-amber-400">{scorecard.partial_controls}</div>
-                    </div>
-                    <div className="glass-panel p-4">
-                      <span className="text-xs text-slate-400">Critical Gaps</span>
-                      <div className="text-3xl font-bold text-rose-400">{scorecard.gap_controls}</div>
-                    </div>
-                  </div>
+                <div className="glass-card rounded-xl p-3 text-center text-slate-500 text-[11px] shrink-0">
+                  <span>Click any device on the canvas to inspect, change its subnet, or delete it.</span>
+                </div>
+              )}
 
-                  <div className="glass-panel p-6 space-y-3">
-                    <h3 className="font-semibold text-sm text-slate-200">Live Control Family Progress ({scorecard.active_node_count} Active Topology Nodes Evaluated)</h3>
-                    {scorecard.family_scores?.map((f, i) => (
-                      <div key={i} className="p-3 rounded bg-slate-900 border border-slate-800 flex justify-between items-center text-xs">
-                        <span className="text-slate-200 font-medium">{f.family}</span>
-                        <span className={`px-3 py-1 rounded-full font-mono border ${f.status === 'Good' ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-rose-950 text-rose-300 border-rose-800'}`}>
-                          {f.score}% ({f.status})
-                        </span>
+              {/* Active Device List with 1-Click Delete */}
+              {topologyResult?.nodes?.length > 0 && (
+                <div className="glass-card rounded-xl p-3 shadow-sm flex-1 overflow-y-auto custom-scroll">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-2">
+                    Active Devices ({topologyResult.nodes.length})
+                  </h3>
+                  <div className="space-y-1">
+                    {topologyResult.nodes.map(n => (
+                      <div
+                        key={n.id}
+                        className={`p-1.5 rounded-lg border text-xs flex items-center justify-between ${
+                          selectedNode?.id === n.id ? "bg-cyan-950/40 border-cyan-600" : "bg-slate-900/50 border-slate-800"
+                        }`}
+                      >
+                        <button
+                          onClick={() => setSelectedNode(n)}
+                          className="text-left truncate flex-1 text-[11px] text-slate-200 hover:text-white"
+                        >
+                          <span className="font-medium">{n.name}</span>
+                          <span className="text-[9px] text-slate-400 block">{n.type}</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteNode(n.id)}
+                          className="text-slate-400 hover:text-rose-400 px-1.5 py-0.5 rounded text-xs ml-1 font-bold"
+                          title="Delete device"
+                        >
+                          ✕
+                        </button>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
+
+            </section>
+
+            {/* ============================================================ */}
+            {/* CENTER COLUMN: 3-Tab Main Hub (Map, Clarifications, XAI Trace) (5 cols) */}
+            {/* ============================================================ */}
+            <section className="lg:col-span-5 h-full flex flex-col gap-2.5 overflow-hidden">
+              
+              {/* Main Hub Container with 3 Top Tabs */}
+              <div className="glass-card rounded-xl p-2.5 flex flex-col flex-1 shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between gap-2 mb-2 shrink-0">
+                  {/* 3 View Tabs */}
+                  <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
+                    <button
+                      onClick={() => setActiveCanvasTab("network")}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md transition ${
+                        activeCanvasTab === "network"
+                          ? "bg-cyan-600 text-white shadow"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      Network Map
+                    </button>
+                    <button
+                      onClick={() => setActiveCanvasTab("clarifications")}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md transition flex items-center gap-1.5 ${
+                        activeCanvasTab === "clarifications"
+                          ? "bg-amber-600 text-white shadow"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <span>Clarifying Questions</span>
+                      {((topologyResult?.clarification_prompts?.length || 0) + (auditResult?.assessor_checklist?.length || 0)) > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-amber-400 text-slate-950">
+                          {(topologyResult?.clarification_prompts?.length || 0) + (auditResult?.assessor_checklist?.length || 0)}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setActiveCanvasTab("xai")}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md transition ${
+                        activeCanvasTab === "xai"
+                          ? "bg-purple-600 text-white shadow"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      AI Compliance Trace
+                    </button>
+                  </div>
+
+                  {/* Scope filter when in XAI view */}
+                  {activeCanvasTab === "xai" && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-slate-400">Focus:</span>
+                      <select
+                        value={selectedFamilyFilter}
+                        onChange={(e) => setSelectedFamilyFilter(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 text-slate-200 text-[10px] font-semibold px-2 py-0.5 rounded"
+                      >
+                        <option value="ALL">All Families</option>
+                        <option value="03.01">Access Control</option>
+                        <option value="03.05">Ident & Auth</option>
+                        <option value="03.08">Media Protection</option>
+                        <option value="03.13">System & Comms</option>
+                        <option value="03.14">System Integrity</option>
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="text-[11px] text-slate-400 font-medium">
+                    {topologyResult?.nodes?.length || 0} Assets
+                  </div>
+                </div>
+
+                {/* View 1 & View 3: Cytoscape Canvas (Network Map or XAI Trace) */}
+                {activeCanvasTab !== "clarifications" && (
+                  <div className="flex-1 w-full overflow-hidden">
+                    <GraphVisualizer
+                      graphData={currentGraphData}
+                      activeTab={activeCanvasTab}
+                      onNodeSelect={(n) => setSelectedNode(n)}
+                      selectedNodeId={selectedNode?.id}
+                      xaiFamilyFilter={selectedFamilyFilter}
+                    />
+                  </div>
+                )}
+
+                {/* View 2: Dedicated Clarifying Questions & Assessor Checklist View */}
+                {activeCanvasTab === "clarifications" && (
+                  <div className="flex-1 w-full overflow-y-auto custom-scroll p-2 flex flex-col gap-4">
+                    
+                    {/* Section 1: Network & Security Clarifications (1-Click Resolvers) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2 pb-1 border-b border-slate-800">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                          <span>1. Network Security Clarifications</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 font-mono">
+                            {topologyResult?.clarification_prompts?.length || 0} Pending
+                          </span>
+                        </h3>
+                        <span className="text-[10px] text-slate-400">1-Click answers update node state</span>
+                      </div>
+
+                      {topologyResult?.clarification_prompts?.length > 0 ? (
+                        <div className="space-y-2">
+                          {topologyResult.clarification_prompts.map((cp, idx) => (
+                            <div key={idx} className="p-3 rounded-lg bg-slate-900 border border-slate-800 flex flex-col gap-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="text-xs text-slate-100 font-medium leading-relaxed">
+                                  {cp.question}
+                                </p>
+                                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-slate-800 text-cyan-400 font-mono shrink-0">
+                                  {cp.property_in_question}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 pt-1">
+                                <button
+                                  onClick={() => handleAnswerClarification(cp.node_id, cp.property_in_question, true)}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-md transition shadow"
+                                >
+                                  {cp.suggested_options?.[0] || "Yes, Confirmed"}
+                                </button>
+                                <button
+                                  onClick={() => handleAnswerClarification(cp.node_id, cp.property_in_question, false)}
+                                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-md transition border border-slate-700"
+                                >
+                                  {cp.suggested_options?.[1] || "No / Unsure"}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-lg bg-slate-900/40 border border-slate-800 text-center text-xs text-emerald-400">
+                          ✓ All automated network clarifications have been resolved!
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Section 2: Cyber Clinic Assessor Interview Checklist */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2 pb-1 border-b border-slate-800">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+                          <span>2. Assessor Interview Checklist</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 font-mono">
+                            {auditResult?.assessor_checklist?.length || 0} Questions
+                          </span>
+                        </h3>
+                        <span className="text-[10px] text-slate-400">NIST SP 800-171 Rev 3 Controls</span>
+                      </div>
+
+                      {auditResult?.assessor_checklist?.length > 0 ? (
+                        <div className="space-y-2">
+                          {auditResult.assessor_checklist.map((item, idx) => (
+                            <div key={idx} className="p-3 rounded-lg bg-slate-900 border border-slate-800 flex flex-col gap-1 text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-purple-300">Question {idx + 1}</span>
+                                <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/50">
+                                  NIST {item.control_id}
+                                </span>
+                              </div>
+                              <p className="text-slate-200 font-medium leading-relaxed">
+                                "{item.question_to_ask}"
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-lg bg-slate-900/40 border border-slate-800 text-center text-xs text-slate-400">
+                          Click "Run NIST SP 800-171 Audit" to generate tailored assessor interview questions.
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                )}
+
+              </div>
+
+              {/* Bottom Quick-Action Notification if Pending Clarifications exist */}
+              {activeCanvasTab !== "clarifications" && topologyResult?.clarification_prompts?.length > 0 && (
+                <div className="glass-card rounded-xl p-2.5 border-amber-800/60 bg-amber-950/30 shadow-md shrink-0 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                    <span className="text-xs text-amber-200 font-semibold">
+                      {topologyResult.clarification_prompts.length} Security Clarifications Pending
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setActiveCanvasTab("clarifications")}
+                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold rounded-md transition shadow"
+                  >
+                    View & Answer Questions ➔
+                  </button>
+                </div>
+              )}
+
+            </section>
+
+            {/* ============================================================ */}
+            {/* RIGHT COLUMN: Explicit Audit Action & Scorecard (4 cols) */}
+            {/* ============================================================ */}
+            <section className="lg:col-span-4 h-full overflow-y-auto custom-scroll flex flex-col gap-3 pl-1">
+              
+              {/* Step 2/3: Explicit Run Audit CTA Banner */}
+              <div className="glass-card rounded-xl p-3 shadow-md border-emerald-700/50 bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950/40 shrink-0">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400">
+                    Step 2: Run Compliance Assessment
+                  </span>
+                  {auditPending && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                      Audit Needed
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-300 mb-2.5 leading-snug">
+                  Evaluate your active network topology against NIST SP 800-171 Rev 3 core technical controls.
+                </p>
+
+                <button
+                  onClick={handleRunAudit}
+                  disabled={loading || (topologyResult?.nodes?.length || 0) === 0}
+                  className="w-full py-2 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 disabled:opacity-50 text-white font-bold text-xs rounded-lg shadow-lg shadow-emerald-950/50 transition flex items-center justify-center gap-1.5"
+                >
+                  <span>{loading ? "Evaluating..." : "🚀 Run NIST SP 800-171 Audit"}</span>
+                </button>
+              </div>
+
+              {/* Traffic Light Scorecard */}
+              {auditResult ? (
+                <div className="glass-card rounded-xl p-3 shadow-sm shrink-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                      NIST 800-171 Readiness
+                    </h2>
+                    <span className="text-[9px] text-slate-400 font-mono">5 Core Families</span>
+                  </div>
+
+                  {/* Score Pill / Gauge */}
+                  <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between mb-2">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold block">Overall Readiness</span>
+                      <div className="text-xl font-black text-slate-100 flex items-baseline gap-1">
+                        <span>{auditResult?.overall_score_pct || 0}%</span>
+                        <span className="text-[10px] font-semibold text-slate-400">Compliant</span>
+                      </div>
+                    </div>
+
+                    {/* Traffic Light Badge */}
+                    <div className={`px-2.5 py-1 rounded-lg font-bold text-xs flex items-center gap-1.5 ${
+                      (auditResult?.overall_score_pct || 0) >= 70
+                        ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                        : (auditResult?.overall_score_pct || 0) >= 45
+                        ? "bg-amber-950 text-amber-300 border border-amber-800"
+                        : "bg-rose-950 text-rose-300 border border-rose-800"
+                    }`}>
+                      <span className="w-2 h-2 rounded-full bg-current"></span>
+                      <span>
+                        {(auditResult?.overall_score_pct || 0) >= 70
+                          ? "Good State"
+                          : (auditResult?.overall_score_pct || 0) >= 45
+                          ? "Action Needed"
+                          : "Critical Gaps"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 5 Family Breakdown Cards */}
+                  <div className="space-y-1">
+                    {auditResult?.family_scorecards?.map((fam) => (
+                      <button
+                        key={fam.family_code}
+                        onClick={() => setSelectedFamilyFilter(fam.family_code === selectedFamilyFilter ? "ALL" : fam.family_code)}
+                        className={`w-full p-2 rounded-lg border text-left transition flex items-center justify-between ${
+                          selectedFamilyFilter === fam.family_code
+                            ? "bg-slate-800/90 border-cyan-500"
+                            : "bg-slate-900/50 border-slate-800/80 hover:border-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-cyan-400">{fam.short_code}</span>
+                          <div>
+                            <span className="text-xs font-medium text-slate-200 block">{fam.family_name}</span>
+                            <span className="text-[9px] text-slate-400">{fam.met}/{fam.total} Met &bull; {fam.unmet} Gaps</span>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span className={`text-xs font-bold ${
+                            fam.score_pct >= 70 ? "text-emerald-400" : fam.score_pct >= 40 ? "text-amber-400" : "text-rose-400"
+                          }`}>
+                            {fam.score_pct}%
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="glass-card rounded-xl p-4 text-center text-slate-500 text-xs shrink-0">
+                  <span>Configure your network devices, then click "Run NIST SP 800-171 Audit" above to view compliance metrics.</span>
+                </div>
+              )}
+
+              {/* Top 3 Plain-English Fixes (High Impact) */}
+              {auditResult?.top_fixes?.length > 0 && (
+                <div className="glass-card rounded-xl p-3 shadow-sm flex-1 overflow-y-auto custom-scroll">
+                  <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                      Top High-Impact Fixes
+                    </h2>
+                    <span className="text-[9px] text-slate-400">Plain-English</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {auditResult.top_fixes.map((fix, idx) => (
+                      <div key={idx} className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60">
+                            {fix.impact}
+                          </span>
+                          <span className="text-[9px] text-slate-400">{fix.effort}</span>
+                        </div>
+                        <h4 className="text-xs font-bold text-slate-100">{fix.title}</h4>
+                        <p className="text-[10px] text-slate-300 leading-snug">{fix.description}</p>
+                        
+                        <ul className="text-[10px] text-slate-400 space-y-0.5 pt-1 list-disc list-inside">
+                          {fix.plain_english_steps?.map((step, sIdx) => (
+                            <li key={sIdx} className="leading-snug">{step}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </section>
+
+          </main>
+
+          {/* ============================================================ */}
+          {/* MODAL 1: Add New Device Modal (with Subnet Assignment) */}
+          {/* ============================================================ */}
+          {showAddDeviceModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+              <div className="glass-card rounded-xl max-w-sm w-full p-4 border-slate-700 shadow-2xl">
+                <h3 className="text-sm font-bold text-slate-100 mb-2.5">
+                  Add New Device
+                </h3>
+                <div className="space-y-2.5">
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Device Name</label>
+                    <input
+                      type="text"
+                      value={newDeviceName}
+                      onChange={(e) => setNewDeviceName(e.target.value)}
+                      placeholder="e.g. Accounting PC, Backup Server"
+                      className="w-full text-xs p-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Device Type</label>
+                    <select
+                      value={newDeviceType}
+                      onChange={(e) => setNewDeviceType(e.target.value)}
+                      className="w-full text-xs p-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 focus:outline-none focus:border-cyan-500"
+                    >
+                      <option value="device">Workstation / Laptop</option>
+                      <option value="firewall">Firewall / Gateway</option>
+                      <option value="storage">Storage / NAS</option>
+                      <option value="server">Application Server</option>
+                      <option value="cloud_service">Cloud SaaS / VPN</option>
+                      <option value="subnet">Subnet / VLAN</option>
+                    </select>
+                  </div>
+
+                  {newDeviceType !== "subnet" && activeSubnets.length > 0 && (
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Assign to Subnet / VLAN Container:</label>
+                      <select
+                        value={newDeviceSubnet}
+                        onChange={(e) => setNewDeviceSubnet(e.target.value)}
+                        className="w-full text-xs p-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 focus:outline-none focus:border-cyan-500"
+                      >
+                        <option value="">(None / Direct Boundary)</option>
+                        {activeSubnets.map(sub => (
+                          <option key={sub.id} value={sub.id}>{sub.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      onClick={() => setShowAddDeviceModal(false)}
+                      className="px-3 py-1 text-xs text-slate-400 hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddDevice}
+                      className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg shadow"
+                    >
+                      Add to Map
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
-          </>
+
+          {/* ============================================================ */}
+          {/* MODAL 2: 1-Click Executive Report Modal & Print View */}
+          {/* ============================================================ */}
+          {showReportModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
+              <div className="glass-card rounded-2xl max-w-3xl w-full p-6 lg:p-8 border-slate-700 shadow-2xl my-8 text-slate-200 flex flex-col gap-4">
+                
+                {/* Header with Print Button */}
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-cyan-400">Cyber Clinic Compliance Assessment</span>
+                    <h2 className="text-lg font-black text-white tracking-tight">Executive Compliance & Action Report</h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => window.print()}
+                      className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg shadow"
+                    >
+                      Print / Save PDF
+                    </button>
+                    <button
+                      onClick={() => setShowReportModal(false)}
+                      className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white rounded-lg bg-slate-800"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {/* Organization Details */}
+                <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs">
+                  <div>
+                    <span className="text-slate-400 block mb-0.5">Assessed Organization</span>
+                    <input
+                      type="text"
+                      value={reportOrgName}
+                      onChange={(e) => setReportOrgName(e.target.value)}
+                      className="bg-slate-950 font-semibold text-slate-100 p-1.5 rounded border border-slate-800 w-full"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block mb-0.5">Standard & Version</span>
+                    <span className="font-semibold text-slate-100 block pt-1.5">NIST SP 800-171 Rev 3 (5 Technical Families)</span>
+                  </div>
+                </div>
+
+                {/* Executive Summary Score Banner */}
+                <div className="p-3.5 rounded-xl bg-gradient-to-r from-slate-900 to-cyan-950/40 border border-cyan-800/40 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">Overall Readiness Score</span>
+                    <div className="text-2xl font-black text-white">{auditResult?.overall_score_pct || 0}%</div>
+                  </div>
+                  <div className="text-right text-xs">
+                    <span className="text-emerald-400 font-bold block">{auditResult?.met_count || 0} Controls Met</span>
+                    <span className="text-rose-400 font-bold block">{auditResult?.unmet_count || 0} Priority Gaps</span>
+                    <span className="text-amber-400 font-bold block">{auditResult?.insufficient_data_count || 0} Need Clarification</span>
+                  </div>
+                </div>
+
+                {/* High Priority Remediation Steps */}
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2">
+                    Top 3 High-Impact Action Items for Small Business
+                  </h3>
+                  <div className="space-y-1.5">
+                    {auditResult?.top_fixes?.map((fix, idx) => (
+                      <div key={idx} className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-slate-100">{idx+1}. {fix.title}</span>
+                          <span className="text-[9px] text-emerald-400 font-semibold">{fix.impact}</span>
+                        </div>
+                        <p className="text-slate-300 mb-1.5">{fix.description}</p>
+                        <ul className="text-slate-400 list-disc list-inside space-y-0.5 text-[11px]">
+                          {fix.plain_english_steps?.map((step, sIdx) => (
+                            <li key={sIdx}>{step}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+            </div>
           )}
+
         </div>
       );
     }
