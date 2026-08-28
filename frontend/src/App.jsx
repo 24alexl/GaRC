@@ -6,7 +6,7 @@ import CoverageReport from './components/CoverageReport';
 import { Cpu, Network, ShieldCheck } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('engine1');
+  const [activeTab, setActiveTab] = useState('engine2');
 
   return (
     <div className="min-h-screen bg-[#090d16] text-slate-100 p-4 md:p-6 font-sans">
@@ -26,12 +26,12 @@ export default function App() {
           >
             <span className="w-5 h-5 rounded-full bg-purple-950 text-purple-300 border border-purple-800 text-xs flex items-center justify-center font-bold font-mono">1</span>
             <Network className="w-4 h-4" />
-            <span>Network Topology</span>
+            <span>1. Network Topology & Clarification</span>
           </button>
 
           <span className="text-slate-600 font-bold px-1">→</span>
 
-          {/* Step 2: Compliance Assistant */}
+          {/* Step 2: 5-Family Objective Audit */}
           <button
             onClick={() => setActiveTab('engine1')}
             className={`flex items-center space-x-2 px-4 py-2 rounded-xl transition ${
@@ -42,7 +42,7 @@ export default function App() {
           >
             <span className="w-5 h-5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 text-xs flex items-center justify-center font-bold font-mono">2</span>
             <Cpu className="w-4 h-4" />
-            <span>Compliance Assistant (GraphRAG)</span>
+            <span>2. Technical Audit (5 Families)</span>
           </button>
 
           <span className="text-slate-600 font-bold px-1">→</span>
@@ -58,14 +58,14 @@ export default function App() {
           >
             <span className="w-5 h-5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs flex items-center justify-center font-bold font-mono">3</span>
             <ShieldCheck className="w-4 h-4" />
-            <span>NIST 800-171 Gap Scorecard</span>
+            <span>3. NIST 800-171 Gap Scorecard</span>
           </button>
         </div>
 
         {/* Tab Content */}
         <main>
-          {activeTab === 'engine1' && <Engine1Chat />}
           {activeTab === 'engine2' && <Engine2Topology />}
+          {activeTab === 'engine1' && <Engine1Chat />}
           {activeTab === 'scorecard' && <CoverageReport />}
         </main>
       </div>

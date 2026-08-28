@@ -95,6 +95,39 @@ export default function GraphVisualizer({ graphData, onNodeSelect, highlightCont
           }
         },
         {
+          selector: 'node[type = "server"]',
+          style: {
+            'background-color': '#312e81',
+            'border-color': '#818cf8',
+            'border-width': 2.5,
+            'width': 44,
+            'height': 44,
+            'color': '#e0e7ff'
+          }
+        },
+        {
+          selector: 'node[type = "subnet"]',
+          style: {
+            'background-color': '#0f172a',
+            'border-color': '#38bdf8',
+            'border-width': 2,
+            'width': 42,
+            'height': 42,
+            'color': '#bae6fd'
+          }
+        },
+        {
+          selector: 'node[type = "data_asset"]',
+          style: {
+            'background-color': '#78350f',
+            'border-color': '#fbbf24',
+            'border-width': 2,
+            'width': 36,
+            'height': 36,
+            'color': '#fef08a'
+          }
+        },
+        {
           selector: 'node[type = "storage"]',
           style: {
             'background-color': '#9a3412',
@@ -129,6 +162,51 @@ export default function GraphVisualizer({ graphData, onNodeSelect, highlightCont
             'text-background-opacity': 0.9,
             'text-background-padding': '2px',
             'text-rotation': 'autorotate'
+          }
+        },
+        {
+          selector: 'node[status = "MET"]',
+          style: {
+            'background-color': '#064e3b',
+            'border-color': '#10b981',
+            'border-width': 2.5,
+            'color': '#a7f3d0'
+          }
+        },
+        {
+          selector: 'node[status = "UNMET"]',
+          style: {
+            'background-color': '#4c0519',
+            'border-color': '#f43f5e',
+            'border-width': 2.5,
+            'color': '#fecdd3'
+          }
+        },
+        {
+          selector: 'node[status = "INSUFFICIENT_DATA"]',
+          style: {
+            'background-color': '#451a03',
+            'border-color': '#f59e0b',
+            'border-width': 2.5,
+            'color': '#fef08a'
+          }
+        },
+        {
+          selector: 'node[status = "Good"]',
+          style: {
+            'background-color': '#064e3b',
+            'border-color': '#34d399',
+            'border-width': 2.5,
+            'color': '#a7f3d0'
+          }
+        },
+        {
+          selector: 'node[status = "Critical Gap"]',
+          style: {
+            'background-color': '#4c0519',
+            'border-color': '#fb7185',
+            'border-width': 2.5,
+            'color': '#ffe4e6'
           }
         },
         {
