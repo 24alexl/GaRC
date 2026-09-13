@@ -22,38 +22,20 @@ Unlike generic language models that hallucinate regulatory advice, GaRC pairs an
 ## System Architecture
 
 ```mermaid
-graph TD
-    Client[Web Browser / Analyst Dashboard] --> API[FastAPI Application Gateway]
-    
-    subgraph Intake & Modeling
-        API --> Copilot[Cyber Clinic Copilot]
-        Copilot --> Critic[Agentic Topology Critic & Repair Loop]
-        Critic --> ActiveTopo[Active Network Topology Graph]
+flowchart TD
+    UI[Analyst Dashboard & Cytoscape Maps] <--> Gateway[FastAPI Application Gateway]
+
+    subgraph Core [GaRC Core Engine]
+        Gateway --> Copilot[Cyber Clinic Copilot & Critic]
+        Copilot --> Topo[(Active Network Topology)]
+        Topo <--> Sandbox[What-If Remediation Sandbox]
+        Topo --> Auditor[Multi-Hop GraphRAG Auditor]
+        NIST[(NIST SP 800-171 CPRT Graph)] --> Auditor
     end
-    
-    subgraph Remediation Sandbox
-        ActiveTopo --> Sandbox[What-If Remediation Sandbox]
-        Sandbox -->|Simulate / Revert Fixes| ActiveTopo
-    end
-    
-    subgraph Compliance Intelligence
-        ActiveTopo --> Engine1[Engine 1: Multi-Hop GraphRAG Auditor]
-        Engine1 --> BaselineKG[(NIST SP 800-171 CPRT Knowledge Base)]
-        Engine1 --> PluggableLLM[Pluggable LLM Provider System]
-    end
-    
-    subgraph Visualization & Reporting
-        ActiveTopo --> NetMap[Network Map: Hierarchical Clean Flow]
-        BaselineKG --> XAITrace[AI Compliance Trace: Organic Constellation]
-        Engine1 --> Scorecard[Family Readiness Scorecards & Findings]
-        Engine1 --> AssessorChecklist[Assessor Checklist & Clarification Cards]
-    end
-    
-    subgraph LLM Providers
-        PluggableLLM --> OpenRouter[OpenRouter API]
-        PluggableLLM --> Gemini[Google Gemini API]
-        PluggableLLM --> Ollama[Local Offline Ollama]
-    end
+
+    Auditor <--> LLM[Pluggable LLMs<br/>OpenRouter · Gemini · Ollama]
+    Auditor --> Reports[Scorecards, Traces & Reports]
+    Reports --> UI
 ```
 
 ---
