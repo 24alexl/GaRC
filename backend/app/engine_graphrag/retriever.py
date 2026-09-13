@@ -157,42 +157,58 @@ class GraphRAGRetriever:
         for item in records[:5]:
             ctrl_id = f"Ctrl_{item['id']}"
 
-            # Direct Control Node (Clean Label)
+            # Direct Control Node (Clean Label + Full Metadata)
             nodes.append({
                 "data": {
                     "id": ctrl_id,
                     "label": f"NIST {item['id']}\n({item['family']})",
                     "type": "control",
+                    "control_id": item["id"],
+                    "title": item.get("title", f"NIST SP 800-171 {item['id']}"),
+                    "family_name": item.get("family", ""),
                     "description": item["description"],
-                    "guidance": item["guidance"]
+                    "guidance": item["guidance"],
+                    "finding": f"Audited against {item.get('family', 'technical')} requirements.",
+                    "objectives": item.get("objectives", [])
                 }
             })
 
             # Direct Query -> Control Edge
             edges.append({
                 "data": {
+                    "id": f"Edge_UserQuery_{item['id']}",
                     "source": "User_Query",
                     "target": ctrl_id,
-                    "label": "MATCHES_REQUIREMENT"
+                    "label": "MATCHES_REQUIREMENT",
+                    "type": "MATCHES_REQUIREMENT",
+                    "meaning": f"Matches user inquiry with formal requirement NIST SP 800-171 {item['id']}."
                 }
             })
 
             # Objective Nodes directly linked to Control
             for idx, obj in enumerate(item.get("objectives", [])[:2]):
-                obj_id = f"Obj_{item['id']}_{idx}"
+                letter = chr(ord('a') + idx) if idx < 26 else str(idx + 1)
+                obj_id = f"Obj_{item['id']}_{letter}"
                 nodes.append({
                     "data": {
                         "id": obj_id,
-                        "label": f"Objective {idx+1}",
+                        "label": f"DS-A.{item['id']}.{letter}",
                         "type": "objective",
-                        "detail": obj
+                        "obj_label": f"DS-A.{item['id']}.{letter}",
+                        "control_id": item["id"],
+                        "description": obj,
+                        "parent_control": f"NIST {item['id']}",
+                        "test_method": "EXAMINE / TEST (NIST SP 800-171A Rev 3 Assessment Methodology)"
                     }
                 })
                 edges.append({
                     "data": {
+                        "id": f"Edge_{ctrl_id}_{obj_id}",
                         "source": ctrl_id,
                         "target": obj_id,
-                        "label": "HAS_OBJECTIVE"
+                        "label": "DETERMINES",
+                        "type": "DETERMINES",
+                        "meaning": f"NIST SP 800-171A determination objective DS-A.{item['id']}.{letter} for control {item['id']}."
                     }
                 })
 

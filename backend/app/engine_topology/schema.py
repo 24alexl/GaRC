@@ -1,5 +1,6 @@
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field
+
 
 NodeType = Literal["device", "server", "storage", "data_asset", "firewall", "user", "subnet", "cloud_service"]
 RelationshipType = Literal["MEMBER_OF", "LOGS_IN_VIA", "ROUTES_TO", "ACCESSES", "STORES", "PROTECTS", "STORES_CUI"]
@@ -35,3 +36,44 @@ class TopologyParseResult(BaseModel):
     confidence_score: float
     requires_clarification: bool
     clarification_prompts: List[ClarificationPrompt]
+
+class KGTraceItem(BaseModel):
+    id: str  # e.g. "3.1.1", "cui_database", "guest_wifi -> cui_db"
+    label: str  # e.g. "3.1.1 Authorized Access Control", "CUI Database"
+    type: str  # "control" | "node" | "edge"
+    family: Optional[str] = None  # e.g. "03.01", "03.05", "03.08", "03.13", "03.14"
+    status: Optional[str] = None  # "MET" | "UNMET" | "NEEDS_INFO" | "ACTIVE"
+    description: Optional[str] = None
+
+class CopilotChatMessage(BaseModel):
+    role: str = "user"  # "user" or "assistant"
+    content: str
+    kg_traces: List[KGTraceItem] = Field(default_factory=list)
+
+class CopilotChatRequest(BaseModel):
+    message: str
+    history: List[CopilotChatMessage] = Field(default_factory=list)
+
+class CopilotChatResponse(BaseModel):
+    reply: str
+    actions_taken: List[str] = Field(default_factory=list)
+    topology_updated: bool = False
+    topology: Optional[Dict[str, Any]] = None
+    suggested_followups: List[str] = Field(default_factory=list)
+    kg_traces: List[KGTraceItem] = Field(default_factory=list)
+
+class WhatIfSimulateRequest(BaseModel):
+    fix_type: str = Field(description="e.g. ENCRYPT_CUI_VOLUME, ENFORCE_MFA, SEGMENT_GUEST_WIFI, DEPLOY_FIREWALL")
+    target_node_id: Optional[str] = None
+
+class WhatIfSimulateResponse(BaseModel):
+    success: bool
+    fix_title: str
+    description: str
+    score_before: float
+    score_after: float
+    score_delta: float
+    active_fixes: List[str] = Field(default_factory=list)
+    audit_result: Dict[str, Any]
+    topology: Dict[str, Any]
+

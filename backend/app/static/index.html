@@ -12,6 +12,8 @@
   <!-- Dagre Hierarchical Layout Engine for Untangled Graphs -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+  <!-- Marked Markdown Parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
   <style>
@@ -22,6 +24,17 @@
     .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
     .custom-scroll::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
     .custom-scroll::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.6); border-radius: 4px; }
+    
+    /* Rich Markdown Prose */
+    .prose-cyber h1, .prose-cyber h2, .prose-cyber h3 { color: #38bdf8; font-weight: 700; margin-top: 0.4rem; margin-bottom: 0.25rem; }
+    .prose-cyber h3 { font-size: 0.9rem; border-bottom: 1px solid rgba(56, 189, 248, 0.25); padding-bottom: 2px; }
+    .prose-cyber p { margin-bottom: 0.45rem; line-height: 1.5; }
+    .prose-cyber ul { list-style-type: disc; padding-left: 1.2rem; margin-bottom: 0.45rem; }
+    .prose-cyber ol { list-style-type: decimal; padding-left: 1.2rem; margin-bottom: 0.45rem; }
+    .prose-cyber li { margin-bottom: 0.2rem; }
+    .prose-cyber code { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(255,255,255,0.12); padding: 1px 4px; border-radius: 4px; color: #a5f3fc; font-size: 0.85em; }
+    .prose-cyber pre { background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(255,255,255,0.12); padding: 8px; border-radius: 6px; overflow-x: auto; margin-bottom: 0.5rem; }
+    .prose-cyber strong { color: #f8fafc; font-weight: 700; }
     @media print {
       body { background: #ffffff !important; color: #000000 !important; overflow: visible !important; }
       .no-print { display: none !important; }
@@ -39,10 +52,21 @@
 
 
     // --- Interactive Cytoscape Visualizer ---
-    function GraphVisualizer({ graphData, activeTab, onNodeSelect, selectedNodeId, xaiFamilyFilter }) {
+    function GraphVisualizer({ graphData, activeTab, onNodeSelect, onEdgeSelect, selectedNodeId, selectedEdgeId, xaiFamilyFilter, highlightPathTarget }) {
       const containerRef = useRef(null);
       const cyRef = useRef(null);
-      const [currentLayoutName, setCurrentLayoutName] = useState('dagre');
+      // Independent layout preferences: Network Map ALWAYS defaults to Clean Flow (dagre); Compliance Trace defaults to Organic (cose)
+      const [networkLayout, setNetworkLayout] = useState('dagre');
+      const [xaiLayout, setXaiLayout] = useState('cose');
+
+      const currentLayoutName = activeTab === 'network' ? networkLayout : xaiLayout;
+      const setCurrentLayoutName = (newLayout) => {
+        if (activeTab === 'network') {
+          setNetworkLayout(newLayout);
+        } else {
+          setXaiLayout(newLayout);
+        }
+      };
 
       useEffect(() => {
         if (!containerRef.current || !graphData) return;
@@ -100,24 +124,44 @@
               return 1;
             },
             levelWidth: function() { return 1; },
-            padding: 25,
+            padding: 30,
             animate: true
           };
         } else if (currentLayoutName === 'cose') {
+          // Clean Organic Force-Directed Physics: properly scaled forces and randomized initial seeding
           layoutConfig = {
             name: 'cose',
-            idealEdgeLength: 80,
-            nodeOverlap: 15,
+            randomize: true,
+            animate: true,
+            animationDuration: 600,
             fit: true,
-            padding: 25,
-            randomize: false,
-            componentSpacing: 80,
-            nodeRepulsion: 300000,
-            edgeElasticity: 100,
-            nestingFactor: 5,
-            gravity: 80,
-            numIter: 1000,
-            animate: true
+            padding: 35,
+            componentSpacing: 100,
+            nodeOverlap: 8,
+            idealEdgeLength: function(edge) {
+              const t = edge.data('type');
+              if (t === 'INCLUDES_FAMILY') return 150; // Push 5 families well out from Root
+              if (t === 'EVALUATES') return 80;        // Controls spread around family hub
+              return 38;                               // Objectives orbit parent control
+            },
+            edgeElasticity: function(edge) {
+              const t = edge.data('type');
+              if (t === 'INCLUDES_FAMILY') return 64;
+              if (t === 'EVALUATES') return 32;
+              return 16;
+            },
+            nodeRepulsion: function(node) {
+              const t = node.data('type');
+              if (t === 'query') return 18432;         // Central root repels families outward
+              if (t === 'family') return 12288;        // Family hubs repel each other strongly
+              if (t === 'control') return 6144;        // Controls spread out comfortably
+              return 2048;                             // Objective dots
+            },
+            gravity: 0.35,
+            numIter: 1500,
+            initialTemp: 1000,
+            coolingFactor: 0.98,
+            minTemp: 1.0
           };
         }
 
@@ -239,21 +283,91 @@
                 'width': 36, 'height': 36
               }
             },
-            // XAI Tree Specific Styles
+            // XAI Tree Specific Styles: Clean Hierarchical Constellation
             {
               selector: 'node[type = "query"]',
               style: {
-                'background-color': '#059669',
+                'shape': 'diamond',
+                'background-color': '#047857',
                 'border-color': '#34d399',
-                'width': 48, 'height': 48, 'font-size': '11px'
+                'border-width': 3,
+                'width': 52,
+                'height': 52,
+                'font-size': '11px',
+                'font-weight': 800,
+                'color': '#ecfdf5',
+                'text-margin-y': 6,
+                'text-background-color': '#064e3b',
+                'text-background-opacity': 0.95,
+                'text-background-padding': '3px',
+                'text-background-shape': 'roundrectangle'
               }
             },
             {
               selector: 'node[type = "family"]',
               style: {
-                'background-color': '#7c3aed',
+                'shape': 'round-hexagon',
+                'background-color': '#6d28d9',
                 'border-color': '#c084fc',
-                'width': 42, 'height': 42
+                'border-width': 2.5,
+                'width': 44,
+                'height': 44,
+                'font-size': '10px',
+                'font-weight': 700,
+                'color': '#f5f3ff',
+                'text-margin-y': 5,
+                'text-background-color': '#4c1d95',
+                'text-background-opacity': 0.95,
+                'text-background-padding': '2px',
+                'text-background-shape': 'roundrectangle'
+              }
+            },
+            {
+              selector: 'node[type = "control"]',
+              style: {
+                'shape': 'round-rectangle',
+                'width': 34,
+                'height': 34,
+                'font-size': '9px',
+                'font-weight': 700,
+                'text-margin-y': 4,
+                'text-max-width': '85px',
+                'text-background-color': '#080c14',
+                'text-background-opacity': 0.9,
+                'text-background-padding': '2px',
+                'text-background-shape': 'roundrectangle'
+              }
+            },
+            // Objective satellite dots: clean constellation, suppressed labels by default to prevent clutter
+            {
+              selector: 'node[type = "objective"]',
+              style: {
+                'shape': 'ellipse',
+                'width': 14,
+                'height': 14,
+                'border-width': 1.5,
+                'border-color': '#64748b',
+                'background-color': '#1e293b',
+                'label': '', // Clean constellation: suppress text overlap
+                'text-background-opacity': 0
+              }
+            },
+            {
+              selector: 'node[type = "objective"].hovered-node, node[type = "objective"]:selected, node[type = "objective"].path-highlight',
+              style: {
+                'label': 'data(label)',
+                'font-size': '9px',
+                'font-weight': 600,
+                'color': '#a5f3fc',
+                'text-background-color': '#080c14',
+                'text-background-opacity': 0.95,
+                'text-background-padding': '2px',
+                'text-background-shape': 'roundrectangle',
+                'width': 20,
+                'height': 20,
+                'border-width': 2.5,
+                'border-color': '#22d3ee',
+                'z-index': 999
               }
             },
             {
@@ -280,7 +394,23 @@
                 'border-width': 2
               }
             },
-            // Edge Styles
+            {
+              selector: 'node[status = "PENDING_AUDIT"]',
+              style: {
+                'background-color': '#1e293b',
+                'border-color': '#64748b',
+                'border-width': 2
+              }
+            },
+            {
+              selector: 'node[status = "INFO"]',
+              style: {
+                'background-color': '#0f172a',
+                'border-color': '#38bdf8',
+                'border-width': 2.5
+              }
+            },
+            // Edge Styles with clean hierarchy
             {
               selector: 'edge',
               style: {
@@ -291,11 +421,38 @@
                 'curve-style': 'bezier',
                 'font-size': '8px',
                 'font-family': 'Inter, sans-serif',
-                'color': '#94a3b8',
-                'text-background-color': '#080c14',
-                'text-background-opacity': 0.85,
-                'text-background-padding': '1px',
-                'text-rotation': 'autorotate'
+                'color': '#94a3b8'
+              }
+            },
+            {
+              selector: 'edge[type = "DETERMINES"]',
+              style: {
+                'width': 1,
+                'opacity': 0.35,
+                'line-color': '#475569',
+                'target-arrow-shape': 'none'
+              }
+            },
+            {
+              selector: 'edge[type = "EVALUATES"]',
+              style: {
+                'width': 1.8,
+                'opacity': 0.65,
+                'line-color': '#818cf8',
+                'target-arrow-color': '#818cf8',
+                'target-arrow-shape': 'triangle',
+                'arrow-scale': 0.75
+              }
+            },
+            {
+              selector: 'edge[type = "INCLUDES_FAMILY"]',
+              style: {
+                'width': 2.5,
+                'opacity': 0.85,
+                'line-color': '#38bdf8',
+                'target-arrow-color': '#38bdf8',
+                'target-arrow-shape': 'triangle',
+                'arrow-scale': 0.85
               }
             },
             {
@@ -314,6 +471,52 @@
                 'shadow-blur': 10,
                 'shadow-color': '#0284c7',
                 'shadow-opacity': 0.8
+              }
+            },
+            {
+              selector: 'edge:selected',
+              style: {
+                'width': 3.5,
+                'line-color': '#38bdf8',
+                'target-arrow-color': '#38bdf8',
+                'color': '#38bdf8',
+                'opacity': 1
+              }
+            },
+            // Path Highlighting & Dimming Styles
+            {
+              selector: '.path-dimmed',
+              style: {
+                'opacity': 0.12,
+                'text-opacity': 0.12
+              }
+            },
+            {
+              selector: 'node.path-highlight',
+              style: {
+                'border-width': 4,
+                'border-color': '#38bdf8',
+                'shadow-blur': 18,
+                'shadow-color': '#0284c7',
+                'shadow-opacity': 1,
+                'opacity': 1,
+                'text-opacity': 1,
+                'z-index': 999
+              }
+            },
+            {
+              selector: 'edge.path-highlight',
+              style: {
+                'width': 4.5,
+                'line-color': '#38bdf8',
+                'target-arrow-color': '#38bdf8',
+                'color': '#38bdf8',
+                'opacity': 1,
+                'text-opacity': 1,
+                'shadow-blur': 14,
+                'shadow-color': '#0284c7',
+                'shadow-opacity': 0.95,
+                'z-index': 998
               }
             }
           ],
@@ -341,6 +544,26 @@
           if (onNodeSelect) onNodeSelect(nodeData);
         });
 
+        cy.on('tap', 'edge', (evt) => {
+          const edgeData = evt.target.data();
+          if (onEdgeSelect) onEdgeSelect(edgeData);
+        });
+
+        // Hover over objective dots dynamically reveals their label without persistent clutter
+        cy.on('mouseover', 'node[type = "objective"]', (evt) => {
+          evt.target.addClass('hovered-node');
+        });
+        cy.on('mouseout', 'node[type = "objective"]', (evt) => {
+          evt.target.removeClass('hovered-node');
+        });
+
+        // Tapping background clears path highlight & dimming
+        cy.on('tap', (evt) => {
+          if (evt.target === cy) {
+            cy.elements().removeClass('path-dimmed path-highlight');
+          }
+        });
+
         cy.ready(() => {
           fitGraphCleanly(cy);
         });
@@ -357,6 +580,65 @@
           cy.destroy();
         };
       }, [graphData, activeTab, currentLayoutName, xaiFamilyFilter]);
+
+      // Handle Copilot Trace Link -> Organic Path Illumination (Strictly for AI Compliance Trace tab)
+      useEffect(() => {
+        if (activeTab !== 'xai' || !cyRef.current || !highlightPathTarget) return;
+        const cy = cyRef.current;
+        const targetId = highlightPathTarget.targetId;
+        if (!targetId) return;
+
+        // Force Organic Layout on Compliance Trace when tracing path
+        if (xaiLayout !== 'cose') {
+          setXaiLayout('cose');
+        }
+
+        const timer = setTimeout(() => {
+          let targetNode = cy.$(`#Ctrl_${targetId}`);
+          if (!targetNode.length) {
+            targetNode = cy.$(`node[control_id = "${targetId}"]`);
+          }
+          if (!targetNode.length) {
+            targetNode = cy.$(`node[id = "${targetId}"]`);
+          }
+          if (!targetNode.length) {
+            targetNode = cy.nodes().filter(n => (n.data('id') || '').includes(targetId) || (n.data('control_id') || '').includes(targetId));
+          }
+
+          if (targetNode.length > 0) {
+            const rootNode = cy.$('#Audit_Root');
+            let pathElements = cy.collection();
+
+            if (rootNode.length > 0) {
+              const aStar = cy.elements().aStar({ root: rootNode, goal: targetNode.first(), directed: false });
+              if (aStar.found) {
+                pathElements = aStar.path;
+              }
+            }
+
+            if (!pathElements.length) {
+              pathElements = targetNode.first().closedNeighborhood();
+            } else {
+              // Also include direct determination objectives for the control
+              pathElements = pathElements.union(targetNode.first().outgoers());
+            }
+
+            // Dim everything else and highlight path
+            cy.elements().removeClass('path-highlight').addClass('path-dimmed');
+            pathElements.removeClass('path-dimmed').addClass('path-highlight');
+            targetNode.first().select();
+
+            // Smoothly animate zoom & pan to the path
+            cy.animate({
+              fit: { eles: pathElements, padding: 60 },
+              duration: 700,
+              easing: 'ease-out-cubic'
+            });
+          }
+        }, 200);
+
+        return () => clearTimeout(timer);
+      }, [highlightPathTarget, graphData]);
 
       const handleFit = () => {
         if (!cyRef.current) return;
@@ -387,9 +669,19 @@
               className="bg-slate-800 text-slate-200 text-[11px] font-semibold px-2 py-0.5 rounded border border-slate-700 focus:outline-none cursor-pointer"
               title="Change Graph Layout"
             >
-              <option value="dagre">Clean Flow (Hierarchical)</option>
-              <option value="concentric">Concentric Rings</option>
-              <option value="cose">Organic (Force)</option>
+              {activeTab === 'network' ? (
+                <React.Fragment>
+                  <option value="dagre">Clean Flow (Hierarchical)</option>
+                  <option value="concentric">Concentric Rings</option>
+                  <option value="cose">Organic (Force-Directed)</option>
+                </React.Fragment>
+              ) : (
+                <React.Fragment>
+                  <option value="cose">Organic (Force-Directed)</option>
+                  <option value="dagre">Clean Flow (Hierarchical)</option>
+                  <option value="concentric">Concentric Rings</option>
+                </React.Fragment>
+              )}
             </select>
 
             <button onClick={handleFit} className="px-2 py-0.5 text-[11px] text-slate-300 hover:text-white hover:bg-slate-800 rounded transition font-medium" title="Auto-Fit">Auto-Fit</button>
@@ -413,9 +705,13 @@
       const [selectedTemplate, setSelectedTemplate] = useState("clinic");
       const [topologyResult, setTopologyResult] = useState(null);
       const [auditResult, setAuditResult] = useState(null);
+      const [baselineComplianceGraph, setBaselineComplianceGraph] = useState(null);
+      const [baselineFamilyScores, setBaselineFamilyScores] = useState([]);
       const [selectedNode, setSelectedNode] = useState(null);
+      const [selectedComplianceItem, setSelectedComplianceItem] = useState(null);
       const [activeCanvasTab, setActiveCanvasTab] = useState("network"); // "network" | "xai"
       const [selectedFamilyFilter, setSelectedFamilyFilter] = useState("ALL");
+      const [highlightPathTarget, setHighlightPathTarget] = useState(null); // { targetId: string, timestamp: number }
       const [promptText, setPromptText] = useState("");
       const [loading, setLoading] = useState(false);
       const [auditPending, setAuditPending] = useState(true); // Flag indicating audit is needed
@@ -426,6 +722,78 @@
       const [newDeviceType, setNewDeviceType] = useState("device");
       const [newDeviceName, setNewDeviceName] = useState("");
       const [newDeviceSubnet, setNewDeviceSubnet] = useState("");
+      
+      // Cyber Clinic Copilot Conversational State
+      const [copilotMessages, setCopilotMessages] = useState([
+        {
+          role: "assistant",
+          content: "### Welcome to GaRC Cyber Clinic Copilot!\n\nI'm your guided cybersecurity and **NIST SP 800-171 Rev 3** compliance assistant.\n\n- **Ask compliance questions**: *'What is CUI?'*, *'How do we enforce MFA?'*, or *'How can we segment guest Wi-Fi?'*\n- **Describe your computers & gear**: *'We have 5 laptops and a Synology NAS with client contracts'*\n- **Trace directly to CPRT**: Every control and node discussed links directly into the Knowledge Graph below!",
+          kg_traces: [
+            { id: "03.01.01", label: "03.01.01 Access Control", type: "control", family: "03.01", status: "ACTIVE" },
+            { id: "03.05.03", label: "03.05.03 Multi-Factor Auth", type: "control", family: "03.05", status: "ACTIVE" },
+            { id: "03.13.01", label: "03.13.01 Boundary Protection", type: "control", family: "03.13", status: "ACTIVE" }
+          ]
+        }
+      ]);
+      const [copilotInput, setCopilotInput] = useState("");
+      const [copilotLoading, setCopilotLoading] = useState(false);
+      const [copilotFollowups, setCopilotFollowups] = useState([
+        "What is CUI and does my company have it?",
+        "We have 4 Windows PCs and a Synology NAS with patient records",
+        "How do I isolate Guest Wi-Fi from our office data?"
+      ]);
+
+      // Jump to Node or Control from KG Trace link
+      const handleTraceClick = (trace) => {
+        if (!trace) return;
+        if (trace.type === "node") {
+          setActiveCanvasTab("network");
+          setHighlightPathTarget(null);
+          const foundNode = topologyResult?.nodes?.find(n => n.id === trace.id || n.name?.toLowerCase() === trace.label?.toLowerCase());
+          if (foundNode) {
+            setSelectedNode(foundNode);
+            showToast(`Focused on Asset: ${foundNode.name}`);
+          } else {
+            showToast(`Asset: ${trace.label || trace.id}`);
+          }
+        } else if (trace.type === "control") {
+          setActiveCanvasTab("xai");
+          if (trace.family) {
+            setSelectedFamilyFilter(trace.family);
+          }
+          const ctrlId = trace.id;
+          const ctrlData = auditResult?.evaluated_controls?.find(c => c.control_id === ctrlId || c.control_id?.endsWith(ctrlId));
+          if (ctrlData) {
+            setSelectedComplianceItem({ kind: "node", type: "control", ...ctrlData });
+          } else {
+            setSelectedComplianceItem({
+              kind: "node",
+              type: "control",
+              control_id: ctrlId,
+              title: trace.label || `NIST ${ctrlId}`,
+              status: trace.status || "ACTIVE",
+              description: `NIST SP 800-171 Rev 3 requirement for ${ctrlId}.`
+            });
+          }
+          // Highlight full path from Root -> Family -> Control in Organic layout
+          setHighlightPathTarget({ targetId: ctrlId, timestamp: Date.now() });
+          showToast(`Traced Organic Path: Root ➔ Family ➔ NIST ${trace.id}`);
+        }
+      };
+
+      // Quick question to Copilot about a specific control
+      const handleAskCopilotAboutControl = (ctrl) => {
+        if (!ctrl) return;
+        const cid = ctrl.control_id || ctrl.id?.replace('Ctrl_', '') || 'this control';
+        const title = ctrl.title || '';
+        setActiveCanvasTab("copilot");
+        setCopilotInput(`What are the specific requirements for NIST ${cid} (${title}) and how do we satisfy it?`);
+      };
+
+      // Interactive What-If Remediation Sandbox State
+      const [activeWhatIfFixes, setActiveWhatIfFixes] = useState([]);
+      const [simulationDelta, setSimulationDelta] = useState(null);
+
 
       // Notify helper
       const showToast = (msg, type = "success") => {
@@ -433,7 +801,7 @@
         setTimeout(() => setNotification(null), 3000);
       };
 
-      // Load initial templates and default to clinic
+      // Load initial templates and pre-load baseline CPRT Knowledge Graph
       useEffect(() => {
         fetch("/api/templates")
           .then(res => res.json())
@@ -445,6 +813,19 @@
             console.error("Failed to load templates:", err);
             handleLoadTemplate("clinic", false);
           });
+
+        // Immediately fetch static baseline CPRT Knowledge Graph
+        fetch("/api/compliance/baseline-graph")
+          .then(res => res.json())
+          .then(data => {
+            if (data && data.cytoscape_graph) {
+              setBaselineComplianceGraph(data.cytoscape_graph);
+              if (data.family_scorecards) {
+                setBaselineFamilyScores(data.family_scorecards);
+              }
+            }
+          })
+          .catch(err => console.debug("Baseline compliance graph fetch error:", err));
       }, []);
 
       // Load template action (with option to run audit)
@@ -660,10 +1041,101 @@
         }
       };
 
+      // Send message to Cyber Clinic Copilot
+      const handleSendCopilotMessage = async (msgToSend) => {
+        const text = msgToSend || copilotInput;
+        if (!text.trim() || copilotLoading) return;
+
+        const newHistory = [...copilotMessages, { role: "user", content: text }];
+        setCopilotMessages(newHistory);
+        setCopilotInput("");
+        setCopilotLoading(true);
+
+        try {
+          const res = await fetch("/api/chat/copilot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: text,
+              history: newHistory.slice(-6)
+            })
+          });
+          const data = await res.json();
+          setCopilotMessages(prev => [...prev, {
+            role: "assistant",
+            content: data.reply,
+            actions_taken: data.actions_taken,
+            kg_traces: data.kg_traces || []
+          }]);
+          if (data.suggested_followups && data.suggested_followups.length > 0) {
+            setCopilotFollowups(data.suggested_followups);
+          }
+          if (data.topology_updated && data.topology) {
+            setTopologyResult(data.topology);
+            setAuditPending(true);
+            showToast("Network topology updated from Copilot!");
+          }
+        } catch (e) {
+          console.error(e);
+          setCopilotMessages(prev => [...prev, {
+            role: "assistant",
+            content: "⚠️ I encountered an error communicating with the Copilot engine. Please try again."
+          }]);
+        } finally {
+          setCopilotLoading(false);
+        }
+      };
+
+      // What-If Simulation Sandbox Handlers
+      const handleSimulateWhatIf = async (fixType) => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/sandbox/simulate-fix", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fix_type: fixType })
+          });
+          const data = await res.json();
+          if (data.success) {
+            setTopologyResult(data.topology);
+            setAuditResult(data.audit_result);
+            setActiveWhatIfFixes(data.active_fixes || []);
+            setSimulationDelta(data.score_delta);
+            setAuditPending(false);
+            showToast(`Simulated: ${data.fix_title} (+${data.score_delta}% Readiness Gain!)`, "success");
+          }
+        } catch (e) {
+          console.error(e);
+          showToast("What-If simulation failed.", "error");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleRevertWhatIf = async () => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/sandbox/revert-fix", { method: "POST" });
+          const data = await res.json();
+          if (data.success) {
+            setTopologyResult(data.topology);
+            setAuditResult(data.audit_result);
+            setActiveWhatIfFixes([]);
+            setSimulationDelta(null);
+            setAuditPending(false);
+            showToast("Reverted simulations to baseline topology.");
+          }
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
       // Compute graph data for Cytoscape depending on active tab
       const currentGraphData = activeCanvasTab === "network" 
         ? topologyResult?.cytoscape_graph 
-        : auditResult?.cytoscape_graph;
+        : (auditResult?.cytoscape_graph || baselineComplianceGraph);
 
       // Extract all active subnets for assignment dropdown
       const activeSubnets = topologyResult?.nodes?.filter(n => n.type === "subnet") || [];
@@ -721,199 +1193,611 @@
             {/* ============================================================ */}
             <section className="lg:col-span-3 h-full overflow-y-auto custom-scroll flex flex-col gap-3 pr-1">
               
-              {/* Step 1: Quick Templates Card */}
-              <div className="glass-card rounded-xl p-3 shadow-sm shrink-0">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-[11px] font-bold uppercase tracking-wider text-cyan-400">
-                    1. Choose Network Preset
-                  </h2>
-                  <button
-                    onClick={handleClearWorkspace}
-                    className="text-[10px] text-rose-400 hover:text-rose-300 font-medium"
-                  >
-                    Clear All
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    onClick={() => handleLoadTemplate("clinic")}
-                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
-                      selectedTemplate === "clinic"
-                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
-                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
-                    }`}
-                  >
-                    <span className="text-xs font-semibold">Clinic / Dental</span>
-                    <span className="text-[9px] text-slate-400 leading-tight">Patient EHR, Wi-Fi</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleLoadTemplate("law_firm")}
-                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
-                      selectedTemplate === "law_firm"
-                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
-                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
-                    }`}
-                  >
-                    <span className="text-xs font-semibold">Law / CPA Firm</span>
-                    <span className="text-[9px] text-slate-400 leading-tight">Tax CUI, VPN Gate</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleLoadTemplate("subcontractor")}
-                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
-                      selectedTemplate === "subcontractor"
-                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
-                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
-                    }`}
-                  >
-                    <span className="text-xs font-semibold">Defense / CNC</span>
-                    <span className="text-[9px] text-slate-400 leading-tight">CAD Vault, DoD CUI</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleLoadTemplate("nonprofit")}
-                    className={`p-2 rounded-lg border text-left transition flex flex-col ${
-                      selectedTemplate === "nonprofit"
-                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
-                        : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
-                    }`}
-                  >
-                    <span className="text-xs font-semibold">Non-Profit</span>
-                    <span className="text-[9px] text-slate-400 leading-tight">M365, Donor CUI</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Add Devices Palette Toolbar */}
-              <div className="glass-card rounded-xl p-3 shadow-sm shrink-0">
-                <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-2">
-                  Add Device / Subnet
-                </h2>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {[
-                    { type: "device", label: "Workstation" },
-                    { type: "firewall", label: "Firewall" },
-                    { type: "storage", label: "NAS / Vault" },
-                    { type: "server", label: "Server" },
-                    { type: "cloud_service", label: "Cloud/VPN" },
-                    { type: "subnet", label: "Subnet / VLAN" },
-                  ].map(d => (
-                    <button
-                      key={d.type}
-                      onClick={() => {
-                        setNewDeviceType(d.type);
-                        setNewDeviceName(`New ${d.label}`);
-                        setNewDeviceSubnet(activeSubnets[0]?.id || "");
-                        setShowAddDeviceModal(true);
-                      }}
-                      className="p-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition flex flex-col items-center gap-0.5 text-[10px] font-medium"
-                    >
-                      <span>{d.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Selected Node Inspector & Subnet Assignment */}
-              {selectedNode ? (
-                <div className="glass-card rounded-xl p-3 border-cyan-800/60 bg-cyan-950/20 shadow-md shrink-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-100">{selectedNode.label?.split('\n')[0] || selectedNode.id}</h3>
-                      <span className="text-[9px] text-cyan-400 font-mono">Type: {selectedNode.type?.toUpperCase()}</span>
+              {/* ========================================================================= */}
+              {/* MODE A: COMPLIANCE KNOWLEDGE & DEFINITION INSPECTOR (When in XAI Trace)   */}
+              {/* ========================================================================= */}
+              {activeCanvasTab === "xai" ? (
+                <div className="flex flex-col gap-3 h-full">
+                  {/* Top Header Card */}
+                  <div className="glass-card rounded-xl p-3 shadow-sm shrink-0 border-purple-800/60 bg-gradient-to-br from-slate-900 via-slate-900 to-purple-950/40">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
+                        <h2 className="text-[11px] font-bold uppercase tracking-wider text-purple-300">
+                          Compliance Inspector
+                        </h2>
+                      </div>
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800/80">
+                        NIST SP 800-171 Rev 3
+                      </span>
                     </div>
-                    <button
-                      onClick={() => handleDeleteNode(selectedNode.id)}
-                      className="text-xs text-white bg-rose-700 hover:bg-rose-600 px-2.5 py-1 rounded font-semibold transition"
-                      title="Delete this workstation/device"
-                    >
-                      Delete Device
-                    </button>
+                    <p className="text-[11px] text-slate-300 leading-snug">
+                      CPRT Knowledge Graph definition engine. Click any requirement, family, objective, or relationship edge on the graph to define its standard.
+                    </p>
                   </div>
 
-                  {/* Subnet Assignment Dropdown */}
-                  {selectedNode.type !== "subnet" && (
-                    <div className="mb-2.5">
-                      <label className="text-[10px] text-slate-400 block mb-1">Subnet / VLAN Container:</label>
-                      <select
-                        value={selectedNode.parent || ""}
-                        onChange={(e) => handleAssignSubnet(selectedNode.id, e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs p-1.5 rounded focus:outline-none focus:border-cyan-500"
+                  {/* Active Selected Node / Edge Definition Card */}
+                  {selectedComplianceItem ? (
+                    <div className="glass-card rounded-xl p-3 border-purple-800/70 bg-slate-900/90 shadow-md shrink-0 space-y-3 animate-fade-in">
+                      
+                      {/* 1. If Control Node */}
+                      {(selectedComplianceItem.type === "control" || selectedComplianceItem.control_id || selectedComplianceItem.control_code || selectedComplianceItem.id?.startsWith('Ctrl_')) && (() => {
+                        const ctrlDisplayId = selectedComplianceItem.control_id || selectedComplianceItem.control_code || selectedComplianceItem.id?.replace('Ctrl_', '') || selectedComplianceItem.label?.match(/\d{2}\.\d{2}\.\d{2}/)?.[0] || '03.01.01';
+                        const displayTitle = selectedComplianceItem.title || (ctrlDisplayId ? `NIST SP 800-171 Control ${ctrlDisplayId}` : 'Requirement Details');
+                        const displayDesc = selectedComplianceItem.formal_requirement || selectedComplianceItem.description || "Safeguard controlled unclassified information in nonfederal systems and organizations in accordance with NIST SP 800-171 Rev 3.";
+                        const displayGuidance = selectedComplianceItem.guidance || selectedComplianceItem.assessor_guidance || selectedComplianceItem.action_for_assessor;
+                        const displayObjs = selectedComplianceItem.objectives || selectedComplianceItem.determination_objectives || [];
+                        const displayFinding = selectedComplianceItem.finding || selectedComplianceItem.findings;
+
+                        return (
+                          <div>
+                            <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-slate-800">
+                              <div>
+                                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
+                                    NIST {ctrlDisplayId}
+                                  </span>
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    selectedComplianceItem.status === 'MET' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' :
+                                    selectedComplianceItem.status === 'UNMET' ? 'bg-rose-950 text-rose-300 border border-rose-800' :
+                                    'bg-amber-950 text-amber-300 border border-amber-800'
+                                  }`}>
+                                    {selectedComplianceItem.status || 'EVALUATED'}
+                                  </span>
+                                </div>
+                                <h3 className="text-xs font-bold text-slate-100 leading-snug">
+                                  {displayTitle}
+                                </h3>
+                                {(selectedComplianceItem.family_name || selectedComplianceItem.family_code) && (
+                                  <span className="text-[10px] text-purple-400 font-medium block mt-0.5">
+                                    Family: {selectedComplianceItem.family_name || ''} {selectedComplianceItem.family_code ? `(${selectedComplianceItem.family_code})` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Formal Requirement Definition */}
+                            <div className="mb-2.5">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                                📖 Formal Requirement Definition:
+                              </span>
+                              <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] text-slate-200 leading-relaxed font-sans">
+                                {displayDesc}
+                              </div>
+                            </div>
+
+                            {/* Audit Finding / Evidence */}
+                            {displayFinding && (
+                              <div className="mb-2.5">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                                  🔍 Active Topology Finding:
+                                </span>
+                                <div className={`p-2.5 rounded-lg border text-[11px] leading-relaxed font-sans ${
+                                  selectedComplianceItem.status === 'MET' ? 'bg-emerald-950/30 border-emerald-800/70 text-emerald-200' :
+                                  selectedComplianceItem.status === 'UNMET' ? 'bg-rose-950/30 border-rose-800/70 text-rose-200' :
+                                  'bg-amber-950/30 border-amber-800/70 text-amber-200'
+                                }`}>
+                                  {displayFinding}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Assessor Guidance */}
+                            {displayGuidance && (
+                              <div className="mb-2.5">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                                  🛡️ Assessor Guidance & Scope:
+                                </span>
+                                <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80 text-[10.5px] text-slate-300 leading-relaxed font-sans">
+                                  {displayGuidance}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Determination Objectives List */}
+                            {displayObjs.length > 0 && (
+                              <div className="mb-2.5">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                                  📑 Assessment Objectives ({displayObjs.length}):
+                                </span>
+                                <div className="max-h-36 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                                  {displayObjs.map((obj, oIdx) => (
+                                    <div key={oIdx} className="p-1.5 rounded bg-slate-950/70 border border-slate-800/70 text-[10px] text-slate-300 leading-tight flex items-start gap-1.5">
+                                      <span className="font-mono font-bold text-cyan-400 shrink-0">
+                                        [{String.fromCharCode(97 + (oIdx % 26))}]
+                                      </span>
+                                      <span>{typeof obj === 'string' ? obj : obj.description || JSON.stringify(obj)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Quick Interactive Actions */}
+                            <div className="pt-2 border-t border-slate-800 flex flex-col gap-1.5">
+                              <button
+                                onClick={() => {
+                                  setHighlightPathTarget({ targetId: ctrlDisplayId, timestamp: Date.now() });
+                                  showToast(`Traced Path: Audit Root ➔ Family ➔ NIST ${ctrlDisplayId}`);
+                                }}
+                                className="w-full py-1.5 px-2.5 rounded-lg bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-700/50 text-[10.5px] font-medium text-cyan-200 transition flex items-center justify-center gap-1.5"
+                              >
+                                <span>🌐 Trace Path in Organic Graph</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  setCopilotInput(`Explain NIST requirement ${ctrlDisplayId} and tell me how to implement it.`);
+                                  setActiveCanvasTab("copilot");
+                                }}
+                                className="w-full py-1.5 px-2.5 rounded-lg bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 text-[10.5px] font-medium text-purple-200 transition flex items-center justify-center gap-1.5"
+                              >
+                                <span>💬 Ask Copilot How to Implement This</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* 2. If Family Node */}
+                      {selectedComplianceItem.type === "family" && (
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-slate-800">
+                            <div>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-950 text-purple-300 border border-purple-800 block w-fit mb-1">
+                                NIST Control Family
+                              </span>
+                              <h3 className="text-xs font-bold text-slate-100">
+                                {selectedComplianceItem.family_name || selectedComplianceItem.label?.split('\n')[1] || selectedComplianceItem.label} ({selectedComplianceItem.family_code || selectedComplianceItem.short_code})
+                              </h3>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              selectedComplianceItem.status === 'Good' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' :
+                              selectedComplianceItem.status === 'Action Needed' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                              'bg-rose-950 text-rose-300 border border-rose-800'
+                            }`}>
+                              {selectedComplianceItem.status || 'Audited'}
+                            </span>
+                          </div>
+
+                          <div className="mb-2.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                              📖 Family Focus & Scope:
+                            </span>
+                            <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] text-slate-200 leading-relaxed font-sans">
+                              {selectedComplianceItem.focus || "Core technical control family governing security safeguards and risk mitigation."}
+                            </div>
+                          </div>
+
+                          {selectedComplianceItem.score_pct !== undefined && (
+                            <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5">
+                              <div className="flex justify-between text-[11px]">
+                                <span className="text-slate-400">Readiness Score:</span>
+                                <span className="font-bold text-purple-300">{selectedComplianceItem.score_pct}%</span>
+                              </div>
+                              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
+                                <div style={{ width: `${selectedComplianceItem.score_pct}%` }} className="bg-gradient-to-r from-purple-500 to-cyan-400 h-full"></div>
+                              </div>
+                              <div className="flex justify-between text-[10px] text-slate-400 pt-1">
+                                <span className="text-emerald-400 font-semibold">{selectedComplianceItem.met || 0} Met</span>
+                                <span className="text-amber-400 font-semibold">{selectedComplianceItem.insufficient_data || 0} Needs Info</span>
+                                <span className="text-rose-400 font-semibold">{selectedComplianceItem.unmet || 0} Unmet</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 3. If Assessment Objective Node */}
+                      {selectedComplianceItem.type === "objective" && (
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-slate-800">
+                            <div>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-800 block w-fit mb-1">
+                                Assessment Objective
+                              </span>
+                              <h3 className="text-xs font-bold text-slate-100 font-mono">
+                                {selectedComplianceItem.obj_label || selectedComplianceItem.label}
+                              </h3>
+                              {selectedComplianceItem.parent_control && (
+                                <span className="text-[10px] text-cyan-400 font-medium block mt-0.5">
+                                  Parent: NIST {selectedComplianceItem.parent_control}
+                                </span>
+                              )}
+                            </div>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              selectedComplianceItem.status === 'MET' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' :
+                              'bg-rose-950 text-rose-300 border border-rose-800'
+                            }`}>
+                              {selectedComplianceItem.status || 'EVALUATING'}
+                            </span>
+                          </div>
+
+                          <div className="mb-2.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                              📖 Assessment Determination Objective:
+                            </span>
+                            <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] text-slate-200 leading-relaxed font-sans">
+                              {selectedComplianceItem.description || selectedComplianceItem.detail}
+                            </div>
+                          </div>
+
+                          <div className="p-2 rounded-lg bg-slate-950 border border-slate-800 text-[10px] text-slate-400 leading-relaxed font-sans">
+                            <span className="text-slate-300 font-semibold block mb-0.5">NIST SP 800-171A Methodology:</span>
+                            Assessors test this determination statement via Examination of technical architecture, Interview of administrators, and Configuration Testing.
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 4. If Edge / Relationship */}
+                      {selectedComplianceItem.kind === "edge" && (
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-slate-800">
+                            <div>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-800 block w-fit mb-1">
+                                Knowledge Graph Edge
+                              </span>
+                              <h3 className="text-xs font-bold text-slate-100 font-mono">
+                                Relationship: {selectedComplianceItem.label || selectedComplianceItem.type || 'CONNECTS'}
+                              </h3>
+                            </div>
+                          </div>
+
+                          {/* Edge Connection Flow */}
+                          <div className="mb-2.5 p-2 rounded-lg bg-slate-950 border border-slate-800">
+                            <span className="text-[9px] text-slate-500 uppercase font-mono block mb-1">Connection Path:</span>
+                            <div className="flex items-center gap-1.5 text-[11px] text-slate-200 font-mono">
+                              <span className="px-1.5 py-0.5 bg-slate-800 rounded truncate max-w-[110px]" title={selectedComplianceItem.source}>
+                                {selectedComplianceItem.source}
+                              </span>
+                              <span className="text-cyan-400 font-bold">➔</span>
+                              <span className="px-1.5 py-0.5 bg-slate-800 rounded truncate max-w-[110px]" title={selectedComplianceItem.target}>
+                                {selectedComplianceItem.target}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Formal Meaning */}
+                          <div className="mb-2.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                              📖 CPRT Ontology Definition:
+                            </span>
+                            <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] text-slate-200 leading-relaxed font-sans">
+                              {selectedComplianceItem.meaning || (
+                                selectedComplianceItem.label === 'DETERMINES'
+                                  ? "Connects the parent security requirement to its NIST SP 800-171A assessment determination objective. An assessor verifies this test to satisfy the control."
+                                  : selectedComplianceItem.label === 'INCLUDES_FAMILY'
+                                  ? "Defines the technical audit boundary connecting the audit root to this NIST security family domain."
+                                  : `Represents an audit evaluation determination asserting compliance status [${selectedComplianceItem.label}] on the graph.`
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 5. If Audit Root Node */}
+                      {selectedComplianceItem.id === "Audit_Root" && (
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-slate-800">
+                            <div>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800 block w-fit mb-1">
+                                Technical Audit Root
+                              </span>
+                              <h3 className="text-xs font-bold text-slate-100">
+                                5-Family Technical Audit
+                              </h3>
+                            </div>
+                          </div>
+                          <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] text-slate-200 leading-relaxed font-sans">
+                            Evaluates the live network topology across the 5 core technical families: Access Control (03.01), Identification & Auth (03.05), Media Protection (03.08), System & Comms (03.13), and System Integrity (03.14).
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => setSelectedComplianceItem(null)}
+                        className="w-full py-1 text-[10px] text-slate-400 hover:text-white bg-slate-950 hover:bg-slate-800 rounded border border-slate-800 transition"
                       >
-                        <option value="">(None / Direct Boundary)</option>
-                        {activeSubnets.map(sub => (
-                          <option key={sub.id} value={sub.id}>{sub.name}</option>
-                        ))}
-                      </select>
+                        Deselect
+                      </button>
+                    </div>
+                  ) : (
+                    /* Default Prompt Card when no node/edge is selected */
+                    <div className="glass-card rounded-xl p-3 border-slate-800 bg-slate-900/50 shadow-sm shrink-0 flex flex-col gap-2.5 text-center">
+                      <div className="w-9 h-9 rounded-full bg-purple-950/80 border border-purple-800 text-purple-300 flex items-center justify-center mx-auto text-base">
+                        🔍
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-slate-100 mb-1">Click Any Node or Edge</h3>
+                        <p className="text-[11px] text-slate-400 leading-snug">
+                          Select any NIST family, control, objective, or relationship in the graph to define its standard, evidence, and audit test.
+                        </p>
+                      </div>
+
+                      {/* Quick Family Selectors */}
+                      <div className="pt-2 border-t border-slate-800/80 text-left">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                          Jump to Family:
+                        </span>
+                        <div className="grid grid-cols-1 gap-1">
+                          {[
+                            { code: "03.01", name: "Access Control (AC)", color: "text-cyan-400" },
+                            { code: "03.05", name: "Identification & Auth (IA)", color: "text-indigo-400" },
+                            { code: "03.08", name: "Media Protection (MP)", color: "text-amber-400" },
+                            { code: "03.13", name: "System & Comms (SC)", color: "text-emerald-400" },
+                            { code: "03.14", name: "System Integrity (SI)", color: "text-rose-400" },
+                          ].map(f => (
+                            <button
+                              key={f.code}
+                              onClick={() => {
+                                setSelectedFamilyFilter(f.code);
+                                const famData = (auditResult?.family_scorecards || baselineFamilyScores)?.find(s => s.family_code === f.code);
+                                if (famData) {
+                                  setSelectedComplianceItem({ type: 'family', ...famData });
+                                }
+                                showToast(`Focused on ${f.name}`);
+                              }}
+                              className="px-2 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] text-left text-slate-300 hover:text-white transition flex items-center justify-between"
+                            >
+                              <span>{f.name}</span>
+                              <span className={`font-mono text-[9px] ${f.color}`}>➔</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   )}
 
-                  {/* 2 Fast Security Toggles */}
-                  <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                    <label className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
-                      <div className="text-[11px]">
-                        <span className="font-medium text-slate-200">Holds Sensitive / CUI Data</span>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={!!selectedNode.stores_cui}
-                        onChange={() => handleToggleNodeProp(selectedNode.id, 'stores_cui', selectedNode.stores_cui)}
-                        className="w-4 h-4 text-cyan-500 rounded border-slate-700 focus:ring-0 cursor-pointer"
-                      />
-                    </label>
+                  {/* Audited / Baseline Control Families Summary List */}
+                  {((auditResult?.family_scorecards?.length > 0 ? auditResult.family_scorecards : baselineFamilyScores)?.length > 0) && (() => {
+                    const activeScorecards = auditResult?.family_scorecards?.length > 0 ? auditResult.family_scorecards : baselineFamilyScores;
+                    const isAudited = auditResult?.family_scorecards?.length > 0;
 
-                    <label className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
-                      <div className="text-[11px]">
-                        <span className="font-medium text-slate-200">MFA / Firewall Enforced</span>
+                    return (
+                      <div className="glass-card rounded-xl p-3 shadow-sm flex-1 overflow-y-auto custom-scroll">
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                            {isAudited ? `Audited Families (${activeScorecards.length})` : `CPRT Families (${activeScorecards.length})`}
+                          </h3>
+                          <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded border ${
+                            isAudited ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-slate-900 text-slate-400 border-slate-700'
+                          }`}>
+                            {isAudited ? 'Audited' : 'Ready'}
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {activeScorecards.map(fam => (
+                            <button
+                              key={fam.family_code}
+                              onClick={() => {
+                                setSelectedFamilyFilter(fam.family_code);
+                                setSelectedComplianceItem({ type: 'family', ...fam });
+                              }}
+                              className={`w-full p-2 rounded-lg border text-left transition flex items-center justify-between ${
+                                selectedComplianceItem?.family_code === fam.family_code ? 'bg-purple-950/40 border-purple-600' : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              <div>
+                                <span className="text-xs font-semibold text-slate-200 block">{fam.short_code} ({fam.family_code})</span>
+                                <span className="text-[9px] text-slate-400">{fam.family_name}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className={`text-[11px] font-bold block ${
+                                  !isAudited ? 'text-slate-400' : (fam.score_pct >= 70 ? 'text-emerald-400' : fam.score_pct >= 40 ? 'text-amber-400' : 'text-rose-400')
+                                }`}>
+                                  {isAudited ? `${fam.score_pct}%` : `${fam.total} Controls`}
+                                </span>
+                                <span className="text-[9px] text-slate-400">
+                                  {isAudited ? `${fam.met}/${fam.total} Met` : 'Ready to Audit'}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <input
-                        type="checkbox"
-                        checked={!!selectedNode.has_firewall_or_mfa}
-                        onChange={() => handleToggleNodeProp(selectedNode.id, 'has_firewall_or_mfa', selectedNode.has_firewall_or_mfa)}
-                        className="w-4 h-4 text-emerald-500 rounded border-slate-700 focus:ring-0 cursor-pointer"
-                      />
-                    </label>
-                  </div>
+                    );
+                  })()}
                 </div>
               ) : (
-                <div className="glass-card rounded-xl p-3 text-center text-slate-500 text-[11px] shrink-0">
-                  <span>Click any device on the canvas to inspect, change its subnet, or delete it.</span>
-                </div>
-              )}
-
-              {/* Active Device List with 1-Click Delete */}
-              {topologyResult?.nodes?.length > 0 && (
-                <div className="glass-card rounded-xl p-3 shadow-sm flex-1 overflow-y-auto custom-scroll">
-                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-2">
-                    Active Devices ({topologyResult.nodes.length})
-                  </h3>
-                  <div className="space-y-1">
-                    {topologyResult.nodes.map(n => (
-                      <div
-                        key={n.id}
-                        className={`p-1.5 rounded-lg border text-xs flex items-center justify-between ${
-                          selectedNode?.id === n.id ? "bg-cyan-950/40 border-cyan-600" : "bg-slate-900/50 border-slate-800"
+                /* ========================================================================= */
+                /* MODE B: NETWORK TOPOLOGY PALETTE & DEVICE INSPECTOR (When in Network Map) */
+                /* ========================================================================= */
+                <>
+                  {/* Step 1: Quick Templates Card */}
+                  <div className="glass-card rounded-xl p-3 shadow-sm shrink-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <h2 className="text-[11px] font-bold uppercase tracking-wider text-cyan-400">
+                        1. Choose Network Preset
+                      </h2>
+                      <button
+                        onClick={handleClearWorkspace}
+                        className="text-[10px] text-rose-400 hover:text-rose-300 font-medium"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        onClick={() => handleLoadTemplate("clinic")}
+                        className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                          selectedTemplate === "clinic"
+                            ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                            : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
                         }`}
                       >
+                        <span className="text-xs font-semibold">Clinic / Dental</span>
+                        <span className="text-[9px] text-slate-400 leading-tight">Patient EHR, Wi-Fi</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleLoadTemplate("law_firm")}
+                        className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                          selectedTemplate === "law_firm"
+                            ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                            : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
+                        }`}
+                      >
+                        <span className="text-xs font-semibold">Law / CPA Firm</span>
+                        <span className="text-[9px] text-slate-400 leading-tight">Tax CUI, VPN Gate</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleLoadTemplate("subcontractor")}
+                        className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                          selectedTemplate === "subcontractor"
+                            ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                            : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
+                        }`}
+                      >
+                        <span className="text-xs font-semibold">Defense / CNC</span>
+                        <span className="text-[9px] text-slate-400 leading-tight">CAD Vault, DoD CUI</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleLoadTemplate("nonprofit")}
+                        className={`p-2 rounded-lg border text-left transition flex flex-col ${
+                          selectedTemplate === "nonprofit"
+                            ? "bg-cyan-950/60 border-cyan-500 text-cyan-200"
+                            : "bg-slate-900/50 border-slate-800 hover:border-slate-700 text-slate-300"
+                        }`}
+                      >
+                        <span className="text-xs font-semibold">Non-Profit</span>
+                        <span className="text-[9px] text-slate-400 leading-tight">M365, Donor CUI</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Add Devices Palette Toolbar */}
+                  <div className="glass-card rounded-xl p-3 shadow-sm shrink-0">
+                    <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-2">
+                      Add Device / Subnet
+                    </h2>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { type: "device", label: "Workstation" },
+                        { type: "firewall", label: "Firewall" },
+                        { type: "storage", label: "NAS / Vault" },
+                        { type: "server", label: "Server" },
+                        { type: "cloud_service", label: "Cloud/VPN" },
+                        { type: "subnet", label: "Subnet / VLAN" },
+                      ].map(d => (
                         <button
-                          onClick={() => setSelectedNode(n)}
-                          className="text-left truncate flex-1 text-[11px] text-slate-200 hover:text-white"
+                          key={d.type}
+                          onClick={() => {
+                            setNewDeviceType(d.type);
+                            setNewDeviceName(`New ${d.label}`);
+                            setNewDeviceSubnet(activeSubnets[0]?.id || "");
+                            setShowAddDeviceModal(true);
+                          }}
+                          className="p-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition flex flex-col items-center gap-0.5 text-[10px] font-medium"
                         >
-                          <span className="font-medium">{n.name}</span>
-                          <span className="text-[9px] text-slate-400 block">{n.type}</span>
+                          <span>{d.label}</span>
                         </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Selected Node Inspector & Subnet Assignment */}
+                  {selectedNode ? (
+                    <div className="glass-card rounded-xl p-3 border-cyan-800/60 bg-cyan-950/20 shadow-md shrink-0">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <h3 className="text-xs font-bold text-slate-100">{selectedNode.label?.split('\n')[0] || selectedNode.id}</h3>
+                          <span className="text-[9px] text-cyan-400 font-mono">Type: {selectedNode.type?.toUpperCase()}</span>
+                        </div>
                         <button
-                          onClick={() => handleDeleteNode(n.id)}
-                          className="text-slate-400 hover:text-rose-400 px-1.5 py-0.5 rounded text-xs ml-1 font-bold"
-                          title="Delete device"
+                          onClick={() => handleDeleteNode(selectedNode.id)}
+                          className="text-xs text-white bg-rose-700 hover:bg-rose-600 px-2.5 py-1 rounded font-semibold transition"
+                          title="Delete this workstation/device"
                         >
-                          ✕
+                          Delete Device
                         </button>
                       </div>
-                    ))}
-                  </div>
-                </div>
+
+                      {/* Subnet Assignment Dropdown */}
+                      {selectedNode.type !== "subnet" && (
+                        <div className="mb-2.5">
+                          <label className="text-[10px] text-slate-400 block mb-1">Subnet / VLAN Container:</label>
+                          <select
+                            value={selectedNode.parent || ""}
+                            onChange={(e) => handleAssignSubnet(selectedNode.id, e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs p-1.5 rounded focus:outline-none focus:border-cyan-500"
+                          >
+                            <option value="">(None / Direct Boundary)</option>
+                            {activeSubnets.map(sub => (
+                              <option key={sub.id} value={sub.id}>{sub.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* 2 Fast Security Toggles */}
+                      <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                        <label className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                          <div className="text-[11px]">
+                            <span className="font-medium text-slate-200">Holds Sensitive / CUI Data</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={!!selectedNode.stores_cui}
+                            onChange={() => handleToggleNodeProp(selectedNode.id, 'stores_cui', selectedNode.stores_cui)}
+                            className="w-4 h-4 text-cyan-500 rounded border-slate-700 focus:ring-0 cursor-pointer"
+                          />
+                        </label>
+
+                        <label className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800 cursor-pointer hover:border-slate-700 transition">
+                          <div className="text-[11px]">
+                            <span className="font-medium text-slate-200">MFA / Firewall Enforced</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={!!selectedNode.has_firewall_or_mfa}
+                            onChange={() => handleToggleNodeProp(selectedNode.id, 'has_firewall_or_mfa', selectedNode.has_firewall_or_mfa)}
+                            className="w-4 h-4 text-emerald-500 rounded border-slate-700 focus:ring-0 cursor-pointer"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="glass-card rounded-xl p-3 text-center text-slate-500 text-[11px] shrink-0">
+                      <span>Click any device on the canvas to inspect, change its subnet, or delete it.</span>
+                    </div>
+                  )}
+
+                  {/* Active Device List with 1-Click Delete */}
+                  {topologyResult?.nodes?.length > 0 && (
+                    <div className="glass-card rounded-xl p-3 shadow-sm flex-1 overflow-y-auto custom-scroll">
+                      <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-2">
+                        Active Devices ({topologyResult.nodes.length})
+                      </h3>
+                      <div className="space-y-1">
+                        {topologyResult.nodes.map(n => (
+                          <div
+                            key={n.id}
+                            className={`p-1.5 rounded-lg border text-xs flex items-center justify-between ${
+                              selectedNode?.id === n.id ? "bg-cyan-950/40 border-cyan-600" : "bg-slate-900/50 border-slate-800"
+                            }`}
+                          >
+                            <button
+                              onClick={() => setSelectedNode(n)}
+                              className="text-left truncate flex-1 text-[11px] text-slate-200 hover:text-white"
+                            >
+                              <span className="font-medium">{n.name}</span>
+                              <span className="text-[9px] text-slate-400 block">{n.type}</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteNode(n.id)}
+                              className="text-slate-400 hover:text-rose-400 px-1.5 py-0.5 rounded text-xs ml-1 font-bold"
+                              title="Delete device"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
             </section>
@@ -926,10 +1810,13 @@
               {/* Main Hub Container with 3 Top Tabs */}
               <div className="glass-card rounded-xl p-2.5 flex flex-col flex-1 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between gap-2 mb-2 shrink-0">
-                  {/* 3 View Tabs */}
+                  {/* View Tabs */}
                   <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
                     <button
-                      onClick={() => setActiveCanvasTab("network")}
+                      onClick={() => {
+                        setActiveCanvasTab("network");
+                        setHighlightPathTarget(null);
+                      }}
                       className={`px-2.5 py-1 text-xs font-semibold rounded-md transition ${
                         activeCanvasTab === "network"
                           ? "bg-cyan-600 text-white shadow"
@@ -937,6 +1824,17 @@
                       }`}
                     >
                       Network Map
+                    </button>
+                    <button
+                      onClick={() => setActiveCanvasTab("copilot")}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md transition flex items-center gap-1.5 ${
+                        activeCanvasTab === "copilot"
+                          ? "bg-indigo-600 text-white shadow"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <span>💬 Copilot Chat</span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
                     </button>
                     <button
                       onClick={() => setActiveCanvasTab("clarifications")}
@@ -990,17 +1888,185 @@
                 </div>
 
                 {/* View 1 & View 3: Cytoscape Canvas (Network Map or XAI Trace) */}
-                {activeCanvasTab !== "clarifications" && (
+                {(activeCanvasTab === "network" || activeCanvasTab === "xai") && (
                   <div className="flex-1 w-full overflow-hidden">
                     <GraphVisualizer
                       graphData={currentGraphData}
                       activeTab={activeCanvasTab}
-                      onNodeSelect={(n) => setSelectedNode(n)}
-                      selectedNodeId={selectedNode?.id}
+                      onNodeSelect={(n) => {
+                        if (activeCanvasTab === "xai") {
+                          setSelectedComplianceItem({ kind: "node", ...n });
+                        } else {
+                          setSelectedNode(n);
+                        }
+                      }}
+                      onEdgeSelect={(e) => {
+                        if (activeCanvasTab === "xai") {
+                          setSelectedComplianceItem({ kind: "edge", ...e });
+                        }
+                      }}
+                      selectedNodeId={activeCanvasTab === "xai" ? selectedComplianceItem?.id : selectedNode?.id}
+                      selectedEdgeId={activeCanvasTab === "xai" ? selectedComplianceItem?.id : null}
                       xaiFamilyFilter={selectedFamilyFilter}
+                      highlightPathTarget={highlightPathTarget}
                     />
                   </div>
                 )}
+
+                {/* View: Cyber Clinic Copilot Conversational Chat */}
+                {activeCanvasTab === "copilot" && (
+                  <div className="flex-1 w-full flex flex-col overflow-hidden bg-slate-950/60 rounded-lg p-2.5">
+                    {/* Header bar */}
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 shrink-0">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span className="text-xs font-bold text-slate-200">Cyber Clinic Copilot (NIST SP 800-171 Advisor & Topology Builder)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-cyan-400 bg-cyan-950/70 border border-cyan-800/60 px-2 py-0.5 rounded font-mono">
+                          🔗 KG Tracing Active
+                        </span>
+                        <span className="text-[10px] text-indigo-400 bg-indigo-950/70 border border-indigo-800/60 px-2 py-0.5 rounded font-mono">
+                          Agentic Critic Active
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Messages Scroll Area */}
+                    <div className="flex-1 overflow-y-auto custom-scroll space-y-2.5 pr-1">
+                      {copilotMessages.map((msg, mIdx) => (
+                        <div
+                          key={mIdx}
+                          className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
+                        >
+                          <div
+                            className={`max-w-[90%] rounded-xl p-3 text-xs leading-relaxed ${
+                              msg.role === "user"
+                                ? "bg-cyan-700/90 text-white rounded-br-none shadow"
+                                : "bg-slate-900/95 border border-slate-800 text-slate-200 rounded-bl-none shadow-sm"
+                            }`}
+                          >
+                            {msg.role === "assistant" ? (
+                              <div
+                                className="prose-cyber text-xs leading-relaxed font-sans"
+                                dangerouslySetInnerHTML={{
+                                  __html: window.marked ? marked.parse(msg.content || "") : (msg.content || "")
+                                }}
+                              />
+                            ) : (
+                              <div className="whitespace-pre-wrap font-sans text-xs">
+                                {msg.content}
+                              </div>
+                            )}
+
+                            {/* Knowledge Graph Traces (NIST Controls & Graph Assets) */}
+                            {msg.kg_traces?.length > 0 && (
+                              <div className="mt-2.5 pt-2 border-t border-slate-800/90">
+                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                                  <span className="flex items-center gap-1 text-slate-300">
+                                    <span>🔗 CPRT Knowledge Graph Traces</span>
+                                  </span>
+                                  <span className="text-[9px] text-slate-500 font-normal">Click to link & view</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {msg.kg_traces.map((tr, tIdx) => (
+                                    <button
+                                      key={tIdx}
+                                      onClick={() => handleTraceClick(tr)}
+                                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition flex items-center gap-1 border ${
+                                        tr.type === "control"
+                                          ? "bg-purple-950/70 border-purple-800/60 text-purple-300 hover:bg-purple-900/80 hover:border-purple-500"
+                                          : tr.type === "node"
+                                          ? "bg-cyan-950/70 border-cyan-800/60 text-cyan-300 hover:bg-cyan-900/80 hover:border-cyan-500"
+                                          : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                                      }`}
+                                      title={tr.label || tr.id}
+                                    >
+                                      <span>{tr.type === "control" ? "🛡️" : tr.type === "node" ? "🖥️" : "⚡"}</span>
+                                      <span>{tr.label || tr.id}</span>
+                                      {tr.status && (
+                                        <span className={`text-[8px] px-1 py-0.2 rounded font-mono ${
+                                          tr.status === "MET" ? "bg-emerald-900/80 text-emerald-300" :
+                                          tr.status === "UNMET" ? "bg-rose-900/80 text-rose-300" :
+                                          "bg-amber-900/80 text-amber-300"
+                                        }`}>
+                                          {tr.status}
+                                        </span>
+                                      )}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Critic actions badges if present */}
+                            {msg.actions_taken?.length > 0 && (
+                              <div className="mt-2 pt-1.5 border-t border-slate-800/80 space-y-1">
+                                {msg.actions_taken.map((act, aIdx) => (
+                                  <div key={aIdx} className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono">
+                                    <span>✓</span>
+                                    <span>{act}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-[9px] text-slate-500 mt-0.5 px-1">
+                            {msg.role === "user" ? "You" : "GaRC Copilot"}
+                          </span>
+                        </div>
+                      ))}
+
+                      {copilotLoading && (
+                        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-indigo-300 text-xs animate-pulse w-fit">
+                          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+                          <span>Consulting NIST SP 800-171 & validating topology...</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Suggested Followups */}
+                    {copilotFollowups?.length > 0 && (
+                      <div className="pt-2 pb-1 shrink-0 flex flex-wrap gap-1.5">
+                        {copilotFollowups.map((q, qIdx) => (
+                          <button
+                            key={qIdx}
+                            onClick={() => handleSendCopilotMessage(q)}
+                            className="text-[10px] bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/50 text-slate-300 hover:text-indigo-200 px-2 py-1 rounded-md transition text-left truncate max-w-full"
+                          >
+                            💡 {q}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Input bar */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSendCopilotMessage();
+                      }}
+                      className="flex items-center gap-1.5 pt-2 border-t border-slate-800 shrink-0"
+                    >
+                      <input
+                        type="text"
+                        value={copilotInput}
+                        onChange={(e) => setCopilotInput(e.target.value)}
+                        placeholder="Ask a question or describe equipment (e.g. 'We have 4 PCs & a Synology NAS')..."
+                        disabled={copilotLoading}
+                        className="flex-1 bg-slate-900 border border-slate-800 focus:border-indigo-500 text-slate-100 text-xs px-3 py-2 rounded-lg outline-none transition"
+                      />
+                      <button
+                        type="submit"
+                        disabled={copilotLoading || !copilotInput.trim()}
+                        className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition shadow flex items-center gap-1 shrink-0"
+                      >
+                        <span>Send</span>
+                      </button>
+                    </form>
+                  </div>
+                )}
+
 
                 {/* View 2: Dedicated Clarifying Questions & Assessor Checklist View */}
                 {activeCanvasTab === "clarifications" && (
@@ -1155,6 +2221,27 @@
                     <span className="text-[9px] text-slate-400 font-mono">5 Core Families</span>
                   </div>
 
+                  {/* What-If Sandbox Active Banner */}
+                  {activeWhatIfFixes.length > 0 && (
+                    <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/90 to-cyan-950/90 border border-emerald-500/60 flex items-center justify-between mb-2 shadow-lg animate-fade-in">
+                      <div>
+                        <span className="text-[10px] font-bold text-emerald-300 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                          ⚡ What-If Sandbox Active
+                        </span>
+                        <span className="text-xs text-slate-200 font-semibold">
+                          Simulating {activeWhatIfFixes.length} fix{activeWhatIfFixes.length > 1 ? 'es' : ''} &bull; <strong className="text-emerald-400">+{simulationDelta || 15}% Gain</strong>
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleRevertWhatIf}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-[10px] font-bold rounded border border-slate-700 transition"
+                      >
+                        ↺ Revert
+                      </button>
+                    </div>
+                  )}
+
                   {/* Score Pill / Gauge */}
                   <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between mb-2">
                     <div>
@@ -1228,7 +2315,7 @@
                     <h2 className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
                       Top High-Impact Fixes
                     </h2>
-                    <span className="text-[9px] text-slate-400">Plain-English</span>
+                    <span className="text-[9px] text-slate-400">Plain-English &bull; 1-Click What-If</span>
                   </div>
 
                   <div className="space-y-2">
@@ -1248,11 +2335,28 @@
                             <li key={sIdx} className="leading-snug">{step}</li>
                           ))}
                         </ul>
+
+                        {/* 1-Click What-If Simulation Trigger */}
+                        <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/60 mt-1">
+                          <button
+                            onClick={() => handleSimulateWhatIf(fix.what_if_type || 'ENFORCE_MFA')}
+                            disabled={loading}
+                            className="px-2.5 py-1 rounded bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-[10px] font-bold shadow transition flex items-center gap-1"
+                          >
+                            <span>⚡ Simulate Fix (+Score Boost)</span>
+                          </button>
+                          {activeWhatIfFixes.includes(fix.what_if_type) && (
+                            <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                              ✓ Simulated
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
+
 
             </section>
 

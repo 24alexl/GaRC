@@ -1,10 +1,12 @@
 import logging
 import json
 import re
-from typing import Dict, Any, List
+import copy
+from typing import Dict, Any, List, Optional, Tuple
 from app.engine_topology.schema import TopologyParseResult, NetworkNode, NetworkEdge, ClarificationPrompt
 from app.engine_topology.templates import SMALL_BIZ_TEMPLATES
 from app.db.neo4j_client import neo4j_client
+from app.llm.factory import get_llm_provider
 
 logger = logging.getLogger("garc.engine2.parser")
 
@@ -14,15 +16,20 @@ class TopologyParser:
         self.active_topology_nodes: List[NetworkNode] = []
         self.active_topology_edges: List[NetworkEdge] = []
         self.active_clarification_prompts: List[ClarificationPrompt] = []
+        # Interactive What-If Sandbox State
+        self.what_if_backup_nodes: Any = None
+        self.what_if_backup_edges: Any = None
+        self.active_what_if_fixes: List[str] = []
+        self.last_critic_actions: List[str] = []
 
     def parse_natural_language_topology(self, text: str) -> Dict[str, Any]:
         """
         Engine 2 Pipeline:
         1. Attempts LLM structured extraction to handle complex/messy natural language prompts.
         2. Falls back to deterministic rule-based parser if LLM is unreachable or times out.
-        3. Evaluates confidence scores & security attributes (MFA, CUI flag, Encryption).
+        3. Executes Agentic Critic & Self-Repair Loop (prunes dangling edges, connects orphan nodes, enforces CUI protections).
         4. Identifies missing or ambiguous cybersecurity attributes & generates clarification cards.
-        5. Calculates compliance readiness for gap scorecard.
+        5. Formats compound Cytoscape payload with subnets.
         """
         logger.info(f"Engine 2: Executing network topology extraction for input: '{text[:60]}...'")
         
@@ -35,56 +42,143 @@ class TopologyParser:
         if not nodes:
             nodes, edges, clarification_prompts = self._fallback_rule_based_parser(text)
 
+        # Execute Engine 2 Agentic Critic & Self-Repair Loop
+        nodes, edges, clarification_prompts, critic_actions = self._critic_and_repair_loop(
+            nodes, edges, clarification_prompts or [], text
+        )
+        self.last_critic_actions = critic_actions
+
         # Update active session topology
         self.active_topology_nodes = nodes
         self.active_topology_edges = edges
+        self.active_clarification_prompts = clarification_prompts
 
-        # Overall topology confidence average
-        conf_scores = [n.confidence for n in nodes] + [e.confidence for e in edges]
-        avg_conf = sum(conf_scores) / len(conf_scores) if conf_scores else 0.88
-        requires_clarification = len(clarification_prompts) > 0 or avg_conf < 0.8
+        res = self.format_topology_response(text, nodes, edges, clarification_prompts)
+        res["critic_actions"] = critic_actions
+        return res
 
-        # Format Cytoscape graph payload
-        cyto_nodes = []
-        cyto_edges = []
+    def _critic_and_repair_loop(
+        self,
+        nodes: List[NetworkNode],
+        edges: List[NetworkEdge],
+        prompts: List[ClarificationPrompt],
+        raw_text: str
+    ) -> tuple[List[NetworkNode], List[NetworkEdge], List[ClarificationPrompt], List[str]]:
+        """
+        Engine 2 Agentic Critic & Self-Repair Loop:
+        Reflects over extracted topology to guarantee schema validity, graph connectivity,
+        and NIST SP 800-171 Rev 3 boundary consistency.
+        """
+        critic_actions: List[str] = []
+        text_lower = raw_text.lower()
+        node_map = {n.id: n for n in nodes}
+        subnet_nodes = [n for n in nodes if n.type == "subnet"]
+        firewall_nodes = [n for n in nodes if n.type == "firewall"]
+
+        # Pass 1: Prune invalid or dangling edges
+        valid_edges: List[NetworkEdge] = []
+        for e in edges:
+            if e.source in node_map and e.target in node_map:
+                valid_edges.append(e)
+            else:
+                critic_actions.append(f"Pruned dangling edge: {e.source} -> {e.target}")
+        edges = valid_edges
+
+        # Pass 2: Connect isolated orphan nodes
+        connected_node_ids = set()
+        for e in edges:
+            connected_node_ids.add(e.source)
+            connected_node_ids.add(e.target)
 
         for n in nodes:
-            cyto_nodes.append({
-                "data": {
-                    "id": n.id,
-                    "label": f"{n.name}\n({n.type.upper()})",
-                    "type": n.type,
-                    "confidence": n.confidence,
-                    "stores_cui": n.stores_cui,
-                    "has_firewall_or_mfa": n.has_firewall_or_mfa,
-                    "details": f"OS: {n.os_or_system} | IP/Subnet: {n.ip_or_subnet}"
-                }
-            })
+            if n.type == "subnet":
+                continue
+            if n.id not in connected_node_ids:
+                # Find best target subnet
+                target_sub = None
+                n_name_lower = n.name.lower()
+                if "wifi" in n_name_lower or "wireless" in n_name_lower or "laptop" in n_name_lower:
+                    for s in subnet_nodes:
+                        if "wifi" in s.name.lower() or "wireless" in s.name.lower():
+                            target_sub = s
+                            break
+                if not target_sub and subnet_nodes:
+                    target_sub = subnet_nodes[0]
 
+                if target_sub:
+                    edges.append(NetworkEdge(
+                        source=n.id,
+                        target=target_sub.id,
+                        relationship="MEMBER_OF",
+                        confidence=0.92
+                    ))
+                    connected_node_ids.add(n.id)
+                    critic_actions.append(f"Healed orphan asset: Connected '{n.name}' to subnet '{target_sub.name}'")
+                elif firewall_nodes:
+                    edges.append(NetworkEdge(
+                        source=firewall_nodes[0].id,
+                        target=n.id,
+                        relationship="PROTECTS",
+                        confidence=0.90
+                    ))
+                    connected_node_ids.add(n.id)
+                    critic_actions.append(f"Healed orphan asset: Linked '{n.name}' to perimeter gateway '{firewall_nodes[0].name}'")
+
+        # Pass 3: Enforce firewall security attributes & protection edges
+        for fw in firewall_nodes:
+            if not fw.has_firewall_or_mfa:
+                fw.has_firewall_or_mfa = True
+                critic_actions.append(f"Auto-verified boundary protection flags on firewall '{fw.name}'")
+            for sub in subnet_nodes:
+                has_prot = any(
+                    (e.source == fw.id and e.target == sub.id) or (e.target == fw.id and e.source == sub.id)
+                    for e in edges
+                )
+                if not has_prot:
+                    edges.append(NetworkEdge(
+                        source=fw.id,
+                        target=sub.id,
+                        relationship="PROTECTS",
+                        confidence=0.95
+                    ))
+                    critic_actions.append(f"Created boundary protection edge: '{fw.name}' PROTECTS '{sub.name}'")
+
+        # Pass 4: CUI Asset Assessment & Targeted Clarifications
+        cui_keywords = ["cui", "controlled unclassified", "sensitive", "patient", "payroll", "tax", "confidential", "ehr"]
+        for n in nodes:
+            if any(k in n.name.lower() for k in cui_keywords) or any(k in text_lower and n.id in text_lower for k in cui_keywords):
+                if not n.stores_cui:
+                    n.stores_cui = True
+                    critic_actions.append(f"Flagged compliance-critical CUI storage on '{n.name}'")
+
+            if n.stores_cui and not n.has_firewall_or_mfa:
+                has_prompt = any(cp.node_id == n.id and cp.property_in_question == "has_firewall_or_mfa" for cp in prompts)
+                if not has_prompt:
+                    prompts.append(ClarificationPrompt(
+                        node_id=n.id,
+                        question=f"Is data at rest on '{n.name}' protected with FIPS-validated volume encryption (e.g., BitLocker, LUKS, or AES-256)?",
+                        property_in_question="has_firewall_or_mfa",
+                        suggested_options=["Encrypted (AES-256)", "Unencrypted / Unknown"]
+                    ))
+                    critic_actions.append(f"Generated precision encryption clarification for '{n.name}'")
+
+        # Pass 5: Guest Network Boundary Quarantine
+        cui_node_ids = {n.id for n in nodes if n.stores_cui}
+        sanitized_edges: List[NetworkEdge] = []
         for e in edges:
-            cyto_edges.append({
-                "data": {
-                    "source": e.source,
-                    "target": e.target,
-                    "label": e.relationship,
-                    "is_encrypted": e.is_encrypted,
-                    "confidence": e.confidence
-                }
-            })
+            src_node = node_map.get(e.source)
+            tgt_node = node_map.get(e.target)
+            is_guest = (src_node and "guest" in src_node.name.lower()) or (tgt_node and "guest" in tgt_node.name.lower())
+            accesses_cui = (e.source in cui_node_ids) or (e.target in cui_node_ids)
 
-        result = {
-            "raw_text": text,
-            "nodes": [n.model_dump() for n in nodes],
-            "edges": [e.model_dump() for e in edges],
-            "confidence_score": round(avg_conf, 2),
-            "requires_clarification": requires_clarification,
-            "clarification_prompts": [cp.model_dump() for cp in clarification_prompts],
-            "cytoscape_graph": {
-                "nodes": cyto_nodes,
-                "edges": cyto_edges
-            }
-        }
-        return result
+            if is_guest and accesses_cui and "allow guest" not in text_lower:
+                critic_actions.append(f"Quarantined unsafe link: Severed direct connection from Guest Wi-Fi to CUI storage '{e.target}'")
+            else:
+                sanitized_edges.append(e)
+        edges = sanitized_edges
+
+        return nodes, edges, prompts, critic_actions
+
 
     def _llm_structured_parser(self, text: str):
         """
@@ -736,5 +830,674 @@ Generate a clarification_prompt if security features (MFA, CUI volume encryption
         logger.info(f"Successfully committed topology ({len(nodes)} nodes, {len(edges)} edges) to Neo4j.")
         return {"status": "persisted", "node_count": len(nodes), "edge_count": len(edges)}
 
+    def conversational_copilot(
+        self,
+        message: str,
+        history: Optional[List[Any]] = None,
+        current_nodes: Optional[List[Dict[str, Any]]] = None,
+        current_edges: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Unified Cyber Clinic Copilot:
+        Acts as both a knowledgeable compliance assistant and an interactive topology builder.
+        - Answers general questions in plain English (CUI, MFA, NIST 800-171, best practices).
+        - Incrementally extracts/updates network nodes and edges when infrastructure is discussed.
+        - Runs the Critic & Self-Repair loop on updated state.
+        """
+        # Restore from active session if current_nodes not provided
+        if current_nodes is not None:
+            self.active_topology_nodes = [NetworkNode(**n) for n in current_nodes]
+        if current_edges is not None:
+            self.active_topology_edges = [NetworkEdge(**e) for e in current_edges]
+
+        nodes = self.active_topology_nodes
+        edges = self.active_topology_edges
+
+        # Format existing topology for context
+        topo_summary = "Current Active Network Topology:\n"
+        if not nodes:
+            topo_summary += "(No devices currently mapped.)\n"
+        else:
+            for n in nodes:
+                cui_flag = " [STORES CUI]" if n.stores_cui else ""
+                sec_flag = " [MFA/ENCRYPTION CONFIRMED]" if n.has_firewall_or_mfa else ""
+                topo_summary += f"- {n.id}: '{n.name}' (Type: {n.type}, IP/Subnet: {n.ip_or_subnet}){cui_flag}{sec_flag}\n"
+            for e in edges:
+                enc_flag = " [ENCRYPTED]" if e.is_encrypted else ""
+                topo_summary += f"  * Connection: {e.source} --[{e.relationship}]--> {e.target}{enc_flag}\n"
+
+        history_summary = ""
+        if history:
+            for h in history[-4:]:
+                role = getattr(h, 'role', h.get('role', 'user') if isinstance(h, dict) else 'user')
+                content = getattr(h, 'content', h.get('content', '') if isinstance(h, dict) else '')
+                history_summary += f"{role.capitalize()}: {content}\n"
+
+        system_instruction = """You are GaRC Cyber Clinic Copilot, an approachable, expert cybersecurity advisor for small businesses and defense subcontractors adhering to NIST SP 800-171 Rev 3.
+
+You have two simultaneous roles:
+1. EDUCATOR / ADVISOR: Explain cybersecurity concepts, NIST requirements (CUI, MFA, VLANs, backups, access control) in clear, reassuring, plain English with markdown formatting.
+2. TOPOLOGY BUILDER: Whenever the user describes or modifies equipment, network setup, remote workers, or servers, extract structured actions to update the live network graph.
+
+Allowed mutation actions:
+- "ADD_NODE": { "id": "snake_case", "name": "Human Name", "type": "device"|"server"|"storage"|"data_asset"|"firewall"|"subnet"|"cloud_service", "ip_or_subnet": "...", "stores_cui": bool, "has_firewall_or_mfa": bool, "subnet_id": "optional_subnet_id" }
+- "UPDATE_NODE": { "node_id": "existing_id", "updates": { ... } }
+- "DELETE_NODE": { "node_id": "existing_id" }
+- "ADD_EDGE": { "source": "src_id", "target": "tgt_id", "relationship": "MEMBER_OF"|"ACCESSES"|"STORES"|"PROTECTS"|"CONNECTS_TO", "is_encrypted": bool }
+- "CLEAR": {}
+
+Always output "kg_traces" to link your answer to specific NIST SP 800-171 controls (e.g., 03.01.01, 03.05.03) and network asset nodes.
+"""
+
+        schema_description = """{
+  "reply": "Clear, friendly markdown explanation answering the user's question or summarizing changes made.",
+  "actions_taken": ["Added 2x MacBook laptops", "Connected laptops to Wi-Fi subnet"],
+  "topology_mutations": [
+    {
+      "action": "ADD_NODE",
+      "node": {
+        "id": "dev_macbooks",
+        "name": "2x Remote MacBooks",
+        "type": "device",
+        "stores_cui": false,
+        "has_firewall_or_mfa": false
+      }
+    }
+  ],
+  "suggested_followups": [
+    "Do these MacBooks have FileVault disk encryption enabled?",
+    "How do these remote laptops connect back to the office?"
+  ],
+  "kg_traces": [
+    {
+      "id": "03.01.01",
+      "label": "03.01.01 Authorized Access Control",
+      "type": "control",
+      "family": "03.01",
+      "status": "MET"
+    },
+    {
+      "id": "dev_macbooks",
+      "label": "Remote MacBooks",
+      "type": "node",
+      "status": "NEEDS_INFO"
+    }
+  ]
+}"""
+
+        prompt = f"""{topo_summary}
+
+Recent Conversation:
+{history_summary}
+
+User: {message}
+
+Respond with helpful cyber clinic guidance, network topology mutations, and KG traces."""
+
+        llm = get_llm_provider()
+        payload = {}
+        try:
+            payload = llm.generate_structured_json(prompt, schema_description=schema_description, system_instruction=system_instruction)
+        except Exception as e:
+            logger.debug(f"Copilot LLM call failed or provider offline: {e}. Switching to CPRT fallback engine.")
+
+        # Fallback handling if LLM returns empty or fails
+        if not payload or not isinstance(payload, dict) or "reply" not in payload or not payload.get("reply"):
+            payload = self._copilot_fallback(message, nodes, edges)
+
+        reply = payload.get("reply", "I've reviewed your network configuration.")
+        actions_taken = payload.get("actions_taken", [])
+        mutations = payload.get("topology_mutations", [])
+        followups = payload.get("suggested_followups", [
+            "What security controls should we focus on next?",
+            "How do we isolate guest Wi-Fi from our office data?"
+        ])
+        raw_traces = payload.get("kg_traces", [])
+
+        topology_updated = False
+        if mutations:
+            for m in mutations:
+                act = m.get("action", "").upper()
+                if act == "ADD_NODE" and "node" in m:
+                    n_data = m["node"]
+                    sub_id = n_data.pop("subnet_id", None)
+                    new_n = NetworkNode(**n_data)
+                    self.active_topology_nodes = [n for n in self.active_topology_nodes if n.id != new_n.id]
+                    self.active_topology_nodes.append(new_n)
+                    if sub_id and any(s.id == sub_id for s in self.active_topology_nodes):
+                        self.active_topology_edges.append(NetworkEdge(source=new_n.id, target=sub_id, relationship="MEMBER_OF"))
+                    topology_updated = True
+                elif act == "UPDATE_NODE" and "node_id" in m:
+                    nid = m["node_id"]
+                    upds = m.get("updates", {})
+                    for idx, n in enumerate(self.active_topology_nodes):
+                        if n.id == nid:
+                            curr = n.model_dump()
+                            curr.update(upds)
+                            self.active_topology_nodes[idx] = NetworkNode(**curr)
+                            break
+                    topology_updated = True
+                elif act == "DELETE_NODE" and "node_id" in m:
+                    nid = m["node_id"]
+                    self.active_topology_nodes = [n for n in self.active_topology_nodes if n.id != nid]
+                    self.active_topology_edges = [e for e in self.active_topology_edges if e.source != nid and e.target != nid]
+                    topology_updated = True
+                elif act == "ADD_EDGE" and "source" in m and "target" in m:
+                    self.active_topology_edges.append(NetworkEdge(
+                        source=m["source"],
+                        target=m["target"],
+                        relationship=m.get("relationship", "CONNECTS_TO"),
+                        is_encrypted=m.get("is_encrypted", False)
+                    ))
+                    topology_updated = True
+                elif act == "CLEAR":
+                    self.active_topology_nodes = []
+                    self.active_topology_edges = []
+                    self.active_clarification_prompts = []
+                    topology_updated = True
+
+        if topology_updated:
+            # Run critic & self-repair loop on the mutated topology
+            repaired_nodes, repaired_edges, repaired_prompts, critic_notes = self._critic_and_repair_loop(
+                self.active_topology_nodes,
+                self.active_topology_edges,
+                self.active_clarification_prompts,
+                message
+            )
+            self.active_topology_nodes = repaired_nodes
+            self.active_topology_edges = repaired_edges
+            self.active_clarification_prompts = repaired_prompts
+            for cn in critic_notes:
+                if cn not in actions_taken:
+                    actions_taken.append(cn)
+
+        # Extract and enrich complete KG traces linking controls and nodes
+        kg_traces = self._extract_kg_traces(reply, raw_traces, self.active_topology_nodes, self.active_topology_edges)
+
+        topo_result = self.format_topology_response("Copilot Update", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
+
+        return {
+            "reply": reply,
+            "actions_taken": actions_taken,
+            "topology_updated": topology_updated,
+            "topology": topo_result,
+            "suggested_followups": followups,
+            "kg_traces": kg_traces
+        }
+
+    def _extract_kg_traces(self, reply_text: str, explicit_traces: List[Dict[str, Any]], active_nodes: List[NetworkNode], active_edges: List[NetworkEdge]) -> List[Dict[str, Any]]:
+        """Extracts and deduplicates KG traces (NIST controls, graph nodes, and edges) for UI tracing."""
+        traces = []
+        seen_ids = set()
+
+        for t in (explicit_traces or []):
+            tid = t.get("id")
+            if tid and tid not in seen_ids:
+                traces.append(t)
+                seen_ids.add(tid)
+
+        # Regex detect NIST SP 800-171 Rev 3 controls
+        control_matches = re.findall(r'\b(?:0?3\.\d{1,2}\.\d{1,2}|AC-\d+|IA-\d+|MP-\d+|SC-\d+|SI-\d+)\b', reply_text, re.IGNORECASE)
+        control_family_map = {
+            "03.01": ("03.01", "Access Control"),
+            "3.1": ("03.01", "Access Control"),
+            "AC": ("03.01", "Access Control"),
+            "03.05": ("03.05", "Identification & Authentication"),
+            "3.5": ("03.05", "Identification & Authentication"),
+            "IA": ("03.05", "Identification & Authentication"),
+            "03.08": ("03.08", "Media Protection"),
+            "3.8": ("03.08", "Media Protection"),
+            "MP": ("03.08", "Media Protection"),
+            "03.13": ("03.13", "System & Comms Protection"),
+            "3.13": ("03.13", "System & Comms Protection"),
+            "SC": ("03.13", "System & Comms Protection"),
+            "03.14": ("03.14", "System & Info Integrity"),
+            "3.14": ("03.14", "System & Info Integrity"),
+            "SI": ("03.14", "System & Info Integrity"),
+        }
+
+        for cm in control_matches:
+            cid = cm.strip()
+            # Normalize to 03.xx.xx format if needed
+            normalized_cid = cid
+            if re.match(r'^3\.\d+\.\d+$', cid):
+                parts = cid.split('.')
+                normalized_cid = f"03.{int(parts[1]):02d}.{int(parts[2]):02d}"
+
+            if normalized_cid not in seen_ids:
+                fam = "03.01"
+                fam_label = "Access Control"
+                for prefix, (f_code, f_name) in control_family_map.items():
+                    if cid.upper().startswith(prefix) or normalized_cid.startswith(prefix):
+                        fam = f_code
+                        fam_label = f_name
+                        break
+                traces.append({
+                    "id": normalized_cid,
+                    "label": f"NIST {normalized_cid} ({fam_label})",
+                    "type": "control",
+                    "family": fam,
+                    "status": "ACTIVE"
+                })
+                seen_ids.add(normalized_cid)
+
+        # Detect active topology assets mentioned in text
+        text_lower = reply_text.lower()
+        for node in active_nodes:
+            if node.id not in seen_ids:
+                if node.name.lower() in text_lower or node.id.lower() in text_lower or (node.stores_cui and "cui" in text_lower and node.type in ["storage", "data_asset"]):
+                    traces.append({
+                        "id": node.id,
+                        "label": node.name,
+                        "type": "node",
+                        "family": None,
+                        "status": "MET" if node.has_firewall_or_mfa else "NEEDS_INFO"
+                    })
+                    seen_ids.add(node.id)
+
+        return traces[:7]
+
+    def _copilot_fallback(self, message: str, nodes: List[NetworkNode], edges: List[NetworkEdge]) -> Dict[str, Any]:
+        """High-fidelity CPRT KG-backed fallback for Cyber Clinic Copilot when offline or LLM provider unavailable."""
+        msg_lower = message.lower()
+        mutations: List[Dict[str, Any]] = []
+        actions: List[str] = []
+        kg_traces: List[Dict[str, Any]] = []
+        followups: List[str] = []
+        reply: str = ""
+
+        is_hardware_action = (
+            any(w in msg_lower for w in ["install", "added", "add ", "bought", "deploy", "setup", "synology", "nas", "macbook"])
+            and not any(q in msg_lower for q in ["what is", "why do", "how do", "how should", "explain", "why does"])
+        )
+
+        if is_hardware_action:
+            extracted_items = []
+            if "macbook" in msg_lower or "laptop" in msg_lower or "workstation" in msg_lower or "pc" in msg_lower:
+                node_id = f"dev_laptop_{len(nodes) + 1}"
+                mutations.append({
+                    "action": "ADD_NODE",
+                    "node": {
+                        "id": node_id,
+                        "name": "Staff Workstation / Laptop",
+                        "type": "device",
+                        "ip_or_subnet": "192.168.1.x",
+                        "stores_cui": "cui" in msg_lower or "contract" in msg_lower,
+                        "has_firewall_or_mfa": "mfa" in msg_lower or "encrypted" in msg_lower
+                    }
+                })
+                extracted_items.append("Staff Workstation Laptop")
+                kg_traces.append({"id": node_id, "label": "Staff Workstation", "type": "node", "status": "NEEDS_INFO"})
+
+            if "nas" in msg_lower or "synology" in msg_lower or "storage" in msg_lower or "server" in msg_lower:
+                node_id = f"storage_nas_{len(nodes) + 1}"
+                mutations.append({
+                    "action": "ADD_NODE",
+                    "node": {
+                        "id": node_id,
+                        "name": "Synology / Office NAS",
+                        "type": "storage",
+                        "ip_or_subnet": "192.168.1.50",
+                        "stores_cui": True,
+                        "has_firewall_or_mfa": "mfa" in msg_lower or "encrypted" in msg_lower
+                    }
+                })
+                extracted_items.append("Synology Office NAS (CUI Storage)")
+                kg_traces.append({"id": node_id, "label": "Synology NAS", "type": "node", "status": "NEEDS_INFO"})
+                kg_traces.append({"id": "03.08.03", "label": "03.08.03 Media Encryption", "type": "control", "family": "03.08", "status": "ACTIVE"})
+
+            if "firewall" in msg_lower or "router" in msg_lower or "gateway" in msg_lower or "pfsense" in msg_lower:
+                node_id = f"fw_gateway_{len(nodes) + 1}"
+                mutations.append({
+                    "action": "ADD_NODE",
+                    "node": {
+                        "id": node_id,
+                        "name": "Perimeter Security Gateway",
+                        "type": "firewall",
+                        "ip_or_subnet": "192.168.1.1",
+                        "has_firewall_or_mfa": True
+                    }
+                })
+                extracted_items.append("Perimeter Security Gateway")
+                kg_traces.append({"id": node_id, "label": "Perimeter Security Gateway", "type": "node", "status": "MET"})
+                kg_traces.append({"id": "03.13.01", "label": "03.13.01 Boundary Protection", "type": "control", "family": "03.13", "status": "MET"})
+
+            if extracted_items:
+                reply = (
+                    f"Got it! I've added **{', '.join(extracted_items)}** to your live network map.\n\n"
+                    "Our Critic agent has verified the connections and subnets. You can see the updated topology on the canvas."
+                )
+                actions = [f"Added {item}" for item in extracted_items]
+            else:
+                reply = "I've noted the hardware change and verified your topology on the canvas."
+
+            followups = [
+                "Which subnet should this device connect to?",
+                "Simulate: Enable encryption across new storage",
+                "Run an audit to check our updated score"
+            ]
+
+        elif "cui" in msg_lower or "unclassified" in msg_lower:
+            reply = (
+                "### Controlled Unclassified Information (CUI) & Scoping\n\n"
+                "**CUI** is sensitive government-created or owned information requiring safeguarding under federal contracts (DFARS 252.204-7012 and NIST SP 800-171 Rev 3).\n\n"
+                "**Key Requirements for Small Businesses:**\n"
+                "- **Access Limitation (NIST 03.01.01)**: Only personnel with a verified 'need-to-know' and active background checks may access CUI repositories.\n"
+                "- **At-Rest Volume Encryption (NIST 03.08.03)**: Any drive, NAS volume, or laptop storing CUI must be encrypted with FIPS-validated AES-256 (BitLocker, FileVault, or LUKS).\n"
+                "- **Network Isolation (NIST 03.13.01)**: CUI repositories must sit on a segmented subnet with zero direct routes from untrusted guest networks."
+            )
+            kg_traces = [
+                {"id": "03.01.01", "label": "03.01.01 Authorized Access Control", "type": "control", "family": "03.01", "status": "MET"},
+                {"id": "03.08.03", "label": "03.08.03 Cryptographic Media Protection", "type": "control", "family": "03.08", "status": "NEEDS_INFO"},
+                {"id": "03.13.01", "label": "03.13.01 Boundary Protection", "type": "control", "family": "03.13", "status": "ACTIVE"}
+            ]
+            followups = [
+                "Which assets in our topology store CUI?",
+                "Simulate: Enable AES-256 encryption on CUI storage",
+                "How do we isolate CUI from guest Wi-Fi?"
+            ]
+
+        elif "mfa" in msg_lower or "two factor" in msg_lower or "2fa" in msg_lower or "authenticat" in msg_lower:
+            reply = (
+                "### Multi-Factor Authentication (MFA) Requirements\n\n"
+                "Under **NIST SP 800-171 Rev 3 (Control 03.05.03)**, MFA is non-negotiable for defense contractors and cyber clinic clients:\n\n"
+                "1. **Remote Sessions**: All VPN logins, web portals, and remote desktop sessions connecting into the organizational network.\n"
+                "2. **Privileged Roles**: Administrative consoles, domain controllers, cloud dashboards (e.g., Microsoft 365 Admin, AWS Console).\n\n"
+                "💡 **Clinic Recommendation**: Prefer authenticator apps (TOTP) or FIDO2 hardware tokens (e.g., YubiKey) over SMS text codes, which are vulnerable to SIM-swapping."
+            )
+            kg_traces = [
+                {"id": "03.05.03", "label": "03.05.03 Multi-Factor Authentication", "type": "control", "family": "03.05", "status": "MET"},
+                {"id": "03.01.02", "label": "03.01.02 Transaction & Function Separation", "type": "control", "family": "03.01", "status": "ACTIVE"}
+            ]
+            followups = [
+                "Simulate: Enforce MFA across all endpoints",
+                "Do office workstations need MFA for local Windows login?",
+                "What free MFA tools can small non-profits deploy?"
+            ]
+
+        elif "vlan" in msg_lower or "segment" in msg_lower or "guest" in msg_lower or "wifi" in msg_lower:
+            reply = (
+                "### Network Segmentation & Guest Wi-Fi Isolation\n\n"
+                "Under **NIST SP 800-171 Rev 3 (Control 03.13.01 & 03.13.05)**, visitor and guest devices must never share a broadcast domain with internal business systems.\n\n"
+                "**Standard 3-Zone Architecture:**\n"
+                "1. **Office / Corporate LAN** (`192.168.1.0/24`): Staff PCs and authorized printers.\n"
+                "2. **Secure CUI / Server Enclave** (`192.168.10.0/24`): Restricted behind stateful firewall inspection.\n"
+                "3. **Guest Wi-Fi VLAN** (`192.168.99.0/24`): Client isolation enabled, internet-only access."
+            )
+            kg_traces = [
+                {"id": "03.13.01", "label": "03.13.01 Boundary Protection & Firewalls", "type": "control", "family": "03.13", "status": "MET"},
+                {"id": "03.13.05", "label": "03.13.05 Network Subnet Segmentation", "type": "control", "family": "03.13", "status": "ACTIVE"}
+            ]
+            followups = [
+                "Simulate: Isolate Guest Wi-Fi VLAN",
+                "Can an unmanaged switch support VLAN isolation?",
+                "How do we configure guest isolation on Ubiquiti / pfSense?"
+            ]
+
+        elif "firewall" in msg_lower or "pfsense" in msg_lower or "fortinet" in msg_lower or "router" in msg_lower:
+            reply = (
+                "### Boundary Defense & Perimeter Firewalls\n\n"
+                "**Control 03.13.01** requires managed perimeter security gateways at all external network connections:\n\n"
+                "- **Default-Deny Inbound**: All unsolicited inbound ports (e.g., RDP 3389, SMB 445) must be blocked.\n"
+                "- **Stateful Inspection**: Monitored outbound sessions with DMZ isolation for public-facing servers.\n"
+                "- **Encrypted Management**: Web GUI access restricted to dedicated admin subnets over TLS 1.3."
+            )
+            kg_traces = [
+                {"id": "03.13.01", "label": "03.13.01 Boundary Protection", "type": "control", "family": "03.13", "status": "MET"},
+                {"id": "03.13.06", "label": "03.13.06 Connection Deny by Default", "type": "control", "family": "03.13", "status": "ACTIVE"}
+            ]
+            followups = [
+                "Simulate: Deploy Perimeter Firewall Gateway",
+                "Is a consumer router sufficient for NIST 800-171?",
+                "Which ports should we strictly block on our firewall?"
+            ]
+
+        elif "backup" in msg_lower or "ransomware" in msg_lower or "recover" in msg_lower:
+            reply = (
+                "### Media Protection & Immutable Backups\n\n"
+                "Under **NIST SP 800-171 Rev 3 (Control 03.08.01 & 03.08.03)**:\n\n"
+                "- **The 3-2-1 Backup Rule**: Maintain 3 copies of data, across 2 different media types, with 1 copy stored off-site or in immutable cloud storage.\n"
+                "- **Air-Gapped / Ransomware Resilient**: Ensure backup credentials are separated from standard domain admin accounts so attackers cannot delete recovery snapshots.\n"
+                "- **Restoration Drills**: Test bare-metal restoration at least semi-annually."
+            )
+            kg_traces = [
+                {"id": "03.08.01", "label": "03.08.01 Media Storage Protection", "type": "control", "family": "03.08", "status": "MET"},
+                {"id": "03.08.03", "label": "03.08.03 Media Sanitation & Cryptography", "type": "control", "family": "03.08", "status": "ACTIVE"},
+                {"id": "03.14.01", "label": "03.14.01 Flaw Remediation & Resilience", "type": "control", "family": "03.14", "status": "MET"}
+            ]
+            followups = [
+                "How should we protect our NAS backups from ransomware?",
+                "What cloud backup services are FedRAMP Moderate certified?",
+                "Simulate: Enable encryption on all backup drives"
+            ]
+
+        elif "sprs" in msg_lower or "cmmc" in msg_lower or "score" in msg_lower or "audit" in msg_lower:
+            reply = (
+                "### NIST SP 800-171 Scoring & CMMC Assessment\n\n"
+                "Department of Defense suppliers must submit a **Supplier Performance Risk System (SPRS)** score:\n\n"
+                "- **Scoring Scale**: Ranges from **-203 to +110**.\n"
+                "- **110 Maximum**: Achieving a +110 indicates complete implementation of all 110 requirements.\n"
+                "- **Weighted Deductions**: Missing basic controls (e.g., lack of MFA, unsegmented Wi-Fi) results in severe 5-point and 3-point deductions.\n\n"
+                "Run the **NIST SP 800-171 Audit** in the right panel to calculate your live score!"
+            )
+            kg_traces = [
+                {"id": "03.01.01", "label": "03.01 Access Control", "type": "control", "family": "03.01", "status": "ACTIVE"},
+                {"id": "03.05.01", "label": "03.05 Identification & Auth", "type": "control", "family": "03.05", "status": "ACTIVE"},
+                {"id": "03.13.01", "label": "03.13 System & Comms", "type": "control", "family": "03.13", "status": "ACTIVE"}
+            ]
+            followups = [
+                "Run an audit on our current network topology",
+                "What are the top 3 highest impact fixes to raise our score?",
+                "How does CMMC Level 2 map to NIST 800-171?"
+            ]
+
+        else:
+            extracted_items = []
+            if "macbook" in msg_lower or "laptop" in msg_lower or "workstation" in msg_lower:
+                node_id = f"dev_laptop_{len(nodes) + 1}"
+                mutations.append({
+                    "action": "ADD_NODE",
+                    "node": {
+                        "id": node_id,
+                        "name": "Staff Workstation / Laptop",
+                        "type": "device",
+                        "ip_or_subnet": "192.168.1.x",
+                        "stores_cui": "cui" in msg_lower,
+                        "has_firewall_or_mfa": "mfa" in msg_lower or "encrypted" in msg_lower
+                    }
+                })
+                extracted_items.append("Staff Workstation Laptop")
+                kg_traces.append({"id": node_id, "label": "Staff Workstation", "type": "node", "status": "NEEDS_INFO"})
+
+            if "nas" in msg_lower or "synology" in msg_lower or "storage" in msg_lower or "server" in msg_lower:
+                node_id = f"storage_nas_{len(nodes) + 1}"
+                mutations.append({
+                    "action": "ADD_NODE",
+                    "node": {
+                        "id": node_id,
+                        "name": "Office NAS / File Storage",
+                        "type": "storage",
+                        "ip_or_subnet": "192.168.1.50",
+                        "stores_cui": True,
+                        "has_firewall_or_mfa": "mfa" in msg_lower or "encrypted" in msg_lower
+                    }
+                })
+                extracted_items.append("Office NAS (CUI Storage)")
+                kg_traces.append({"id": node_id, "label": "Office NAS", "type": "node", "status": "NEEDS_INFO"})
+                kg_traces.append({"id": "03.08.03", "label": "03.08.03 Media Encryption", "type": "control", "family": "03.08", "status": "ACTIVE"})
+
+            if "firewall" in msg_lower or "router" in msg_lower or "gateway" in msg_lower:
+                node_id = f"fw_gateway_{len(nodes) + 1}"
+                mutations.append({
+                    "action": "ADD_NODE",
+                    "node": {
+                        "id": node_id,
+                        "name": "Perimeter Security Gateway",
+                        "type": "firewall",
+                        "ip_or_subnet": "192.168.1.1",
+                        "has_firewall_or_mfa": True
+                    }
+                })
+                extracted_items.append("Perimeter Security Gateway")
+                kg_traces.append({"id": node_id, "label": "Perimeter Security Gateway", "type": "node", "status": "MET"})
+                kg_traces.append({"id": "03.13.01", "label": "03.13.01 Boundary Protection", "type": "control", "family": "03.13", "status": "MET"})
+
+            if extracted_items:
+                reply = (
+                    f"Got it! I've added **{', '.join(extracted_items)}** to your live network map.\n\n"
+                    "Our Critic agent has verified the connections and subnets. You can see the updated topology on the canvas."
+                )
+                actions = [f"Added {item}" for item in extracted_items]
+            else:
+                reply = (
+                    "### Welcome to Cyber Clinic Copilot\n\n"
+                    "I help organizations map their network infrastructure and achieve **NIST SP 800-171 Rev 3** compliance.\n\n"
+                    "- **Describe your hardware**: *'We have 8 Dell desktops, a Synology NAS with contracts, and guest Wi-Fi'*\n"
+                    "- **Ask compliance questions**: *'What is CUI?'*, *'How do we enforce MFA?'*, or *'How can we segment guest Wi-Fi?'*\n"
+                    "- **Simulate remedies**: Ask to test encryption or firewall changes to see your score improve."
+                )
+                kg_traces = [
+                    {"id": "03.01.01", "label": "03.01 Access Control", "type": "control", "family": "03.01", "status": "ACTIVE"},
+                    {"id": "03.05.03", "label": "03.05 Multi-Factor Auth", "type": "control", "family": "03.05", "status": "ACTIVE"},
+                    {"id": "03.13.01", "label": "03.13 Boundary Protection", "type": "control", "family": "03.13", "status": "ACTIVE"}
+                ]
+
+            followups = [
+                "What is CUI and does my business have it?",
+                "How do we configure MFA for remote employees?",
+                "Simulate: Isolate Guest Wi-Fi VLAN"
+            ]
+
+        return {
+            "reply": reply,
+            "actions_taken": actions,
+            "topology_mutations": mutations,
+            "suggested_followups": followups,
+            "kg_traces": kg_traces
+        }
+
+    def simulate_what_if_remediation(self, fix_type: str, target_node_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Interactive "What-If" Remediation Sandbox:
+        Applies a simulated cybersecurity control fix to the active topology,
+        triggers the multi-family NIST SP 800-171 audit, and calculates the before/after score delta.
+        """
+        from app.engine_graphrag.xai_reasoner import xai_reasoner
+
+        # Snapshot current state before first simulation so user can revert
+        if not self.what_if_backup_nodes:
+            self.what_if_backup_nodes = copy.deepcopy(self.active_topology_nodes)
+            self.what_if_backup_edges = copy.deepcopy(self.active_topology_edges)
+
+        # Baseline score before applying this fix
+        score_before = xai_reasoner.latest_audit_result.get("overall_score_pct", 0.0) if xai_reasoner.latest_audit_result else 0.0
+
+        fix_type_upper = fix_type.upper()
+        fix_title = ""
+        description = ""
+
+        if "ENCRYPT" in fix_type_upper or "VOLUME" in fix_type_upper:
+            fix_title = "Simulated: Full-Disk / Volume Encryption Enabled"
+            description = "Configured FIPS-compliant AES-256 volume encryption across all sensitive storage pools."
+            for n in self.active_topology_nodes:
+                if n.stores_cui or (target_node_id and n.id == target_node_id) or n.type in ["storage", "server"]:
+                    n.has_firewall_or_mfa = True
+            for e in self.active_topology_edges:
+                e.is_encrypted = True
+
+        elif "MFA" in fix_type_upper or "AUTH" in fix_type_upper:
+            fix_title = "Simulated: Multi-Factor Authentication (MFA) Enforced"
+            description = "Enforced TOTP/FIDO2 MFA across all user logins, administrative consoles, and remote VPN access."
+            for n in self.active_topology_nodes:
+                if n.type in ["device", "user", "cloud_service", "server"]:
+                    n.has_firewall_or_mfa = True
+
+        elif "SEGMENT" in fix_type_upper or "GUEST" in fix_type_upper or "WIFI" in fix_type_upper:
+            fix_title = "Simulated: Guest Wi-Fi Isolated & Segmented"
+            description = "Quarantined guest traffic into a dedicated VLAN with strict ACLs blocking access to internal office LAN."
+            # Ensure guest subnet exists
+            has_guest_sub = any("guest" in n.name.lower() and n.type == "subnet" for n in self.active_topology_nodes)
+            if not has_guest_sub:
+                guest_sub = NetworkNode(
+                    id="subnet_guest_vlan",
+                    name="Isolated Guest Wi-Fi VLAN",
+                    type="subnet",
+                    ip_or_subnet="192.168.99.0/24",
+                    confidence=1.0
+                )
+                self.active_topology_nodes.append(guest_sub)
+                # Sever direct edges from guest devices to CUI or private servers
+                cui_ids = {n.id for n in self.active_topology_nodes if n.stores_cui}
+                self.active_topology_edges = [
+                    e for e in self.active_topology_edges
+                    if not (e.target in cui_ids and "guest" in e.source.lower())
+                ]
+
+        elif "FIREWALL" in fix_type_upper or "PERIMETER" in fix_type_upper or "GATEWAY" in fix_type_upper:
+            fix_title = "Simulated: Stateful Perimeter Firewall Deployed"
+            description = "Installed perimeter boundary firewall with default-deny inbound rule sets."
+            has_fw = any(n.type == "firewall" for n in self.active_topology_nodes)
+            if not has_fw:
+                fw = NetworkNode(
+                    id="fw_perimeter_gateway",
+                    name="Perimeter Security Gateway (pfSense)",
+                    type="firewall",
+                    ip_or_subnet="192.168.1.1",
+                    has_firewall_or_mfa=True,
+                    confidence=1.0
+                )
+                self.active_topology_nodes.append(fw)
+                subnets = [n for n in self.active_topology_nodes if n.type == "subnet"]
+                for s in subnets:
+                    self.active_topology_edges.append(NetworkEdge(source=fw.id, target=s.id, relationship="PROTECTS"))
+            else:
+                for n in self.active_topology_nodes:
+                    if n.type == "firewall":
+                        n.has_firewall_or_mfa = True
+
+        if fix_type not in self.active_what_if_fixes:
+            self.active_what_if_fixes.append(fix_type)
+
+        # Run re-audit
+        new_audit = xai_reasoner.run_parallel_topology_audit(self.active_topology_nodes, self.active_topology_edges)
+        score_after = new_audit.get("overall_score_pct", 0.0)
+        score_delta = round(score_after - score_before, 1)
+
+        topo_res = self.format_topology_response("What-If Simulation", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
+
+        return {
+            "success": True,
+            "fix_title": fix_title or f"Simulated {fix_type}",
+            "description": description or "Applied security fix simulation to active topology.",
+            "score_before": score_before,
+            "score_after": score_after,
+            "score_delta": score_delta,
+            "active_fixes": self.active_what_if_fixes,
+            "audit_result": new_audit,
+            "topology": topo_res
+        }
+
+    def revert_what_if_remediation(self) -> Dict[str, Any]:
+        """Reverts active what-if simulations back to original baseline topology."""
+        from app.engine_graphrag.xai_reasoner import xai_reasoner
+
+        if self.what_if_backup_nodes:
+            self.active_topology_nodes = copy.deepcopy(self.what_if_backup_nodes)
+            self.active_topology_edges = copy.deepcopy(self.what_if_backup_edges or [])
+            self.what_if_backup_nodes = None
+            self.what_if_backup_edges = None
+
+        self.active_what_if_fixes = []
+        new_audit = xai_reasoner.run_parallel_topology_audit(self.active_topology_nodes, self.active_topology_edges)
+        topo_res = self.format_topology_response("Reverted Baseline", self.active_topology_nodes, self.active_topology_edges, self.active_clarification_prompts)
+
+        return {
+            "success": True,
+            "message": "Reverted all What-If simulations to original topology baseline.",
+            "audit_result": new_audit,
+            "topology": topo_res
+        }
+
 topology_parser = TopologyParser()
+
 

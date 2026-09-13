@@ -168,6 +168,40 @@ Audit each control and its objectives against the topology facts."""
                     "objective_results": [{"objective_text": obj, "status": status} for obj in c.get("objectives", [])[:2]]
                 })
 
+        # Multi-Hop Auditor Verification Loop:
+        # Cross-verify each control against CPRT knowledge graph & topology evidence paths
+        verified_evaluated = []
+        cprt_control_ids = {c["id"] for c in controls}
+        for item in evaluated:
+            cid = item["control_id"]
+            # Multi-hop verification 1: verify control exists in NIST CPRT graph
+            if cid not in cprt_control_ids:
+                matching_c = next((c for c in controls if c["id"].startswith(fam_code)), None)
+                if matching_c:
+                    cid = matching_c["id"]
+                    item["control_id"] = cid
+                    item["title"] = matching_c["title"]
+                    item["objectives"] = matching_c.get("objectives", [])
+
+            # Multi-hop verification 2: Topology path evidence verification
+            if cid in ["03.13.01", "03.13.05"]:  # Boundary Protection / Separation
+                has_fw = any((getattr(n, 'type', '') == 'firewall' or (isinstance(n, dict) and n.get('type') == 'firewall')) for n in active_nodes)
+                has_guest = any(("guest" in str(getattr(n, 'name', '')).lower() or (isinstance(n, dict) and "guest" in str(n.get('name', '')).lower())) for n in active_nodes)
+                if not has_fw:
+                    item["status"] = "UNMET"
+                    item["finding"] = "Boundary Protection: No stateful perimeter firewall protecting subnet interfaces."
+                elif has_guest:
+                    item["finding"] = item["finding"] + " (Guest Wi-Fi detected: verify VLAN isolation)"
+            elif cid in ["03.08.07", "03.13.11"]: # Encryption
+                has_cui = any((getattr(n, 'stores_cui', False) or (isinstance(n, dict) and n.get('stores_cui'))) for n in active_nodes)
+                has_sec = any((getattr(n, 'has_firewall_or_mfa', False) or (isinstance(n, dict) and n.get('has_firewall_or_mfa'))) for n in active_nodes if getattr(n, 'stores_cui', False) or (isinstance(n, dict) and n.get('stores_cui')))
+                if has_cui and not has_sec:
+                    item["status"] = "UNMET"
+                    item["finding"] = "Media Protection: Sensitive CUI storage asset lacks verified at-rest volume encryption."
+
+            verified_evaluated.append(item)
+        evaluated = verified_evaluated
+
         return {
             "family_code": fam_code,
             "family_name": fam_name,
@@ -175,6 +209,7 @@ Audit each control and its objectives against the topology facts."""
             "focus": fam_data.get("focus", ""),
             "evaluated_controls": evaluated
         }
+
 
     def run_parallel_topology_audit(self, active_nodes: List[Any], active_edges: List[Any]) -> Dict[str, Any]:
         """
@@ -255,14 +290,26 @@ Audit each control and its objectives against the topology facts."""
                     "id": fam_node_id,
                     "label": f"{fam['short_code']} ({fam['family_code']})\n{fam['family_name']}",
                     "type": "family",
-                    "status": fam_status
+                    "family_code": fam["family_code"],
+                    "family_name": fam["family_name"],
+                    "short_code": fam["short_code"],
+                    "focus": fam.get("focus", ""),
+                    "score_pct": fam_score,
+                    "status": fam_status,
+                    "met": fam_met,
+                    "unmet": fam_unmet,
+                    "insufficient_data": fam_insufficient,
+                    "total": fam_total
                 }
             })
             cyto_edges.append({
                 "data": {
+                    "id": f"Edge_Root_{fam['family_code']}",
                     "source": "Audit_Root",
                     "target": fam_node_id,
-                    "label": "INCLUDES_FAMILY"
+                    "label": "INCLUDES_FAMILY",
+                    "type": "INCLUDES_FAMILY",
+                    "meaning": f"Establishes the technical audit scope connecting to the {fam['family_name']} ({fam['family_code']}) domain."
                 }
             })
 
@@ -271,19 +318,29 @@ Audit each control and its objectives against the topology facts."""
                 cyto_nodes.append({
                     "data": {
                         "id": ctrl_node_id,
-                        "label": f"NIST {ctrl['control_id']}\n[{ctrl['status']}]",
+                        "label": f"NIST {ctrl['control_id']}",
                         "type": "control",
+                        "control_id": ctrl["control_id"],
+                        "title": ctrl.get("title", f"NIST {ctrl['control_id']}"),
                         "status": ctrl["status"],
-                        "description": ctrl["finding"],
-                        "guidance": ctrl["action_for_assessor"],
-                        "objectives": ctrl.get("objectives", [])
+                        "description": ctrl.get("description") or ctrl.get("finding") or f"NIST SP 800-171 Rev 3 Requirement for {ctrl['control_id']}",
+                        "finding": ctrl.get("finding", "Audited against active topology."),
+                        "guidance": ctrl.get("action_for_assessor", "Verify control implementation."),
+                        "action_for_assessor": ctrl.get("action_for_assessor", "Verify control implementation."),
+                        "evidence_from_topology": ctrl.get("evidence_from_topology", "Network topology assets and connection attributes"),
+                        "objectives": ctrl.get("objectives", []),
+                        "family_code": fam["family_code"],
+                        "family_name": fam["family_name"]
                     }
                 })
                 cyto_edges.append({
                     "data": {
+                        "id": f"Edge_{fam_node_id}_{ctrl_node_id}",
                         "source": fam_node_id,
                         "target": ctrl_node_id,
-                        "label": ctrl["status"]
+                        "label": ctrl["status"],
+                        "type": "EVALUATES",
+                        "meaning": f"Automated audit determination status for control {ctrl['control_id']}: {ctrl['status']}"
                     }
                 })
 
@@ -298,17 +355,22 @@ Audit each control and its objectives against the topology facts."""
                             "id": obj_node_id,
                             "label": obj_label,
                             "type": "objective",
+                            "obj_label": obj_label,
                             "status": ctrl["status"],
                             "description": obj_text,
                             "detail": f"CPRT Assessment Objective ({obj_label}): {obj_text}",
-                            "parent_control": ctrl["control_id"]
+                            "parent_control": ctrl["control_id"],
+                            "parent_title": ctrl.get("title", f"NIST {ctrl['control_id']}")
                         }
                     })
                     cyto_edges.append({
                         "data": {
+                            "id": f"Edge_{ctrl_node_id}_{obj_node_id}",
                             "source": ctrl_node_id,
                             "target": obj_node_id,
-                            "label": "DETERMINES"
+                            "label": "DETERMINES",
+                            "type": "DETERMINES",
+                            "meaning": f"Links parent security requirement {ctrl['control_id']} to NIST SP 800-171A assessment objective test {obj_label}."
                         }
                     })
 
@@ -372,6 +434,7 @@ Audit each control and its objectives against the topology facts."""
                 "family": "Media Protection (MP) / Comms (SC)",
                 "impact": "+15% Compliance Readiness",
                 "effort": "Low (1-2 Hours)",
+                "what_if_type": "ENCRYPT_CUI_VOLUME",
                 "description": "Sensitive client/donor data is stored on network drives without verified at-rest encryption.",
                 "plain_english_steps": [
                     "Turn on BitLocker (Windows) or FileVault (Mac) across all workstations holding sensitive documents.",
@@ -390,6 +453,7 @@ Audit each control and its objectives against the topology facts."""
                 "family": "Identification & Authentication (IA)",
                 "impact": "+20% Compliance Readiness",
                 "effort": "Medium (2-4 Hours)",
+                "what_if_type": "ENFORCE_MFA",
                 "description": "Remote gateways, VPNs, and administrative access must require a second factor (authenticator app or security key).",
                 "plain_english_steps": [
                     "Require authenticator apps (e.g. Microsoft Authenticator or Google Authenticator) for Microsoft 365, Google Workspace, and VPN portals.",
@@ -408,6 +472,7 @@ Audit each control and its objectives against the topology facts."""
                 "family": "System and Communications Protection (SC)",
                 "impact": "+15% Compliance Readiness",
                 "effort": "Medium (Half Day)",
+                "what_if_type": "SEGMENT_GUEST_WIFI",
                 "description": "Internal work computers and sensitive data assets must not share an unsegmented network with guest visitors.",
                 "plain_english_steps": [
                     "Configure a dedicated Guest VLAN or separate SSID on your router with client isolation enabled.",
@@ -426,6 +491,7 @@ Audit each control and its objectives against the topology facts."""
                 "family": "System and Information Integrity (SI)",
                 "impact": "+10% Compliance Readiness",
                 "effort": "Low (Ongoing)",
+                "what_if_type": "DEPLOY_FIREWALL",
                 "description": "Ensure all client laptops and servers have active malware scanning and automatic security update channels.",
                 "plain_english_steps": [
                     "Enable Windows Defender or central EDR across all office workstations.",
@@ -435,6 +501,7 @@ Audit each control and its objectives against the topology facts."""
             })
 
         return fixes[:3]
+
 
     def generate_executive_report_data(self, org_name: str = "Client Organization") -> Dict[str, Any]:
         """Generates comprehensive structured export payload for executive & assessor reporting."""
@@ -469,6 +536,143 @@ Audit each control and its objectives against the topology facts."""
             "assessor_checklist": audit.get("assessor_checklist", [])
         }
 
+    def get_baseline_cprt_graph(self) -> Dict[str, Any]:
+        """
+        Generates the static, inherent NIST SP 800-171 Rev 3 CPRT Knowledge Graph
+        without requiring an active topology audit.
+        """
+        technical_families = graphrag_retriever.get_technical_family_subgraphs()
+        cyto_nodes = []
+        cyto_edges = []
+        family_scorecards = []
+
+        # Root Audit node
+        cyto_nodes.append({
+            "data": {
+                "id": "Audit_Root",
+                "label": "5-Family Technical Audit",
+                "type": "query",
+                "status": "INFO",
+                "detail": "NIST SP 800-171 Rev 3 Core Technical Architecture Baseline"
+            }
+        })
+
+        for fam_code, fam_data in technical_families.items():
+            fam_name = fam_data.get("family_name") or fam_data.get("name", fam_code)
+            short_code = fam_data.get("short_code", fam_code)
+            controls = fam_data.get("controls", [])
+            fam_node_id = f"Fam_{fam_code}"
+
+            family_scorecards.append({
+                "family_code": fam_code,
+                "family_name": fam_name,
+                "short_code": short_code,
+                "focus": fam_data.get("focus", ""),
+                "total": len(controls),
+                "met": 0,
+                "unmet": 0,
+                "insufficient_data": len(controls),
+                "score_pct": 0,
+                "status": "Ready to Audit"
+            })
+
+            cyto_nodes.append({
+                "data": {
+                    "id": fam_node_id,
+                    "label": f"{short_code} ({fam_code})\n{fam_name}",
+                    "type": "family",
+                    "family_code": fam_code,
+                    "family_name": fam_name,
+                    "short_code": short_code,
+                    "focus": fam_data.get("focus", ""),
+                    "score_pct": 0,
+                    "status": "Ready to Audit",
+                    "met": 0,
+                    "unmet": 0,
+                    "insufficient_data": len(controls),
+                    "total": len(controls)
+                }
+            })
+
+            cyto_edges.append({
+                "data": {
+                    "id": f"Edge_Root_{fam_code}",
+                    "source": "Audit_Root",
+                    "target": fam_node_id,
+                    "label": "INCLUDES_FAMILY",
+                    "type": "INCLUDES_FAMILY",
+                    "meaning": f"Establishes the technical audit scope connecting to the {fam_name} ({fam_code}) domain."
+                }
+            })
+
+            for ctrl in controls:
+                ctrl_id = ctrl["id"]
+                ctrl_node_id = f"Ctrl_{ctrl_id}"
+                cyto_nodes.append({
+                    "data": {
+                        "id": ctrl_node_id,
+                        "label": f"NIST {ctrl_id}",
+                        "type": "control",
+                        "control_id": ctrl_id,
+                        "title": ctrl.get("title", f"NIST {ctrl_id}"),
+                        "status": "PENDING_AUDIT",
+                        "description": ctrl.get("description", f"NIST SP 800-171 Rev 3 Requirement for {ctrl_id}"),
+                        "formal_requirement": ctrl.get("description", f"NIST SP 800-171 Rev 3 Requirement for {ctrl_id}"),
+                        "finding": "Baseline control standard loaded. Click 'Run NIST SP 800-171 Audit' to evaluate against active topology.",
+                        "guidance": ctrl.get("guidance") or ctrl.get("small_biz_guidance", "Verify control implementation."),
+                        "action_for_assessor": ctrl.get("guidance") or ctrl.get("small_biz_guidance", "Verify control implementation."),
+                        "objectives": ctrl.get("objectives", []),
+                        "family_code": fam_code,
+                        "family_name": fam_name
+                    }
+                })
+                cyto_edges.append({
+                    "data": {
+                        "id": f"Edge_{fam_node_id}_{ctrl_node_id}",
+                        "source": fam_node_id,
+                        "target": ctrl_node_id,
+                        "label": "EVALUATES",
+                        "type": "EVALUATES",
+                        "meaning": f"NIST SP 800-171 requirement standard {ctrl_id} awaiting topology assessment."
+                    }
+                })
+
+                for o_idx, obj_text in enumerate(ctrl.get("objectives", [])):
+                    letter = chr(ord('a') + o_idx) if o_idx < 26 else str(o_idx + 1)
+                    obj_label = f"DS-A.{ctrl_id}.{letter}"
+                    obj_node_id = f"Obj_{ctrl_id}_{letter}"
+
+                    cyto_nodes.append({
+                        "data": {
+                            "id": obj_node_id,
+                            "label": obj_label,
+                            "type": "objective",
+                            "obj_label": obj_label,
+                            "status": "PENDING_AUDIT",
+                            "description": obj_text,
+                            "detail": f"CPRT Assessment Objective ({obj_label}): {obj_text}",
+                            "parent_control": ctrl_id,
+                            "parent_title": ctrl.get("title", f"NIST {ctrl_id}")
+                        }
+                    })
+                    cyto_edges.append({
+                        "data": {
+                            "id": f"Edge_{ctrl_node_id}_{obj_node_id}",
+                            "source": ctrl_node_id,
+                            "target": obj_node_id,
+                            "label": "DETERMINES",
+                            "type": "DETERMINES",
+                            "meaning": f"Links parent security requirement {ctrl_id} to NIST SP 800-171A assessment objective test {obj_label}."
+                        }
+                    })
+
+        return {
+            "cytoscape_graph": {
+                "nodes": cyto_nodes,
+                "edges": cyto_edges
+            },
+            "family_scorecards": family_scorecards
+        }
 
     def explain_control_finding(self, control_id: str, active_nodes: List[Any], active_edges: List[Any]) -> Dict[str, Any]:
         """

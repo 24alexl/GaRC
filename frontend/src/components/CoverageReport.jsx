@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, CheckCircle2, XCircle, AlertTriangle, FileSpreadsheet, RefreshCw, Search, HelpCircle } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, XCircle, AlertTriangle, FileSpreadsheet, RefreshCw, Search, HelpCircle, Zap, RotateCcw } from 'lucide-react';
 
 export default function CoverageReport() {
   const [scorecard, setScorecard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [selectedControl, setSelectedControl] = useState(null);
+  const [activeWhatIfFixes, setActiveWhatIfFixes] = useState([]);
+  const [simulationDelta, setSimulationDelta] = useState(null);
 
   useEffect(() => {
     fetchScorecard();
@@ -19,6 +21,44 @@ export default function CoverageReport() {
       setScorecard(data);
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSimulateWhatIf = async (fixType) => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/sandbox/simulate-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fix_type: fixType })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActiveWhatIfFixes(data.active_fixes || []);
+        setSimulationDelta(data.score_delta);
+        await fetchScorecard();
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRevertWhatIf = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/sandbox/revert-fix', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setActiveWhatIfFixes([]);
+        setSimulationDelta(null);
+        await fetchScorecard();
+      }
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -38,7 +78,7 @@ export default function CoverageReport() {
     }
   };
 
-  if (loading) {
+  if (loading && !scorecard) {
     return (
       <div className="p-12 text-center text-slate-400 text-sm flex flex-col items-center justify-center space-y-3">
         <div className="w-6 h-6 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
@@ -55,6 +95,62 @@ export default function CoverageReport() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-12">
+      {/* Interactive What-If Remediation Sandbox Bar */}
+      <div className="glass-panel p-4 flex flex-wrap items-center justify-between gap-3 border-emerald-500/30 bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950/30">
+        <div className="flex items-center space-x-2">
+          <Zap className="w-4 h-4 text-amber-400" />
+          <span className="text-xs font-bold text-slate-200">Interactive What-If Sandbox:</span>
+          {simulationDelta && (
+            <span className="text-xs font-mono font-bold text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-700">
+              +{simulationDelta}% Readiness Score Boost
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => handleSimulateWhatIf('ENCRYPT_CUI_VOLUME')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+              activeWhatIfFixes.includes('ENCRYPT_CUI_VOLUME')
+                ? 'bg-emerald-600 text-white shadow'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+          >
+            ⚡ What-If: Volume Encryption
+          </button>
+          <button
+            onClick={() => handleSimulateWhatIf('ENFORCE_MFA')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+              activeWhatIfFixes.includes('ENFORCE_MFA')
+                ? 'bg-cyan-600 text-white shadow'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+          >
+            ⚡ What-If: Enforce MFA
+          </button>
+          <button
+            onClick={() => handleSimulateWhatIf('SEGMENT_GUEST_WIFI')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+              activeWhatIfFixes.includes('SEGMENT_GUEST_WIFI')
+                ? 'bg-purple-600 text-white shadow'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+          >
+            ⚡ What-If: Segment Wi-Fi
+          </button>
+
+          {activeWhatIfFixes.length > 0 && (
+            <button
+              onClick={handleRevertWhatIf}
+              className="px-3 py-1.5 rounded-lg bg-rose-950 text-rose-300 border border-rose-800 text-xs font-bold transition flex items-center space-x-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Revert Baseline</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Top Overview Metric Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="glass-panel p-5 space-y-1">

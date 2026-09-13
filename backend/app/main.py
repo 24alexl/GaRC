@@ -9,6 +9,7 @@ from app.db.neo4j_client import neo4j_client
 from app.db.seed_nist_800_171 import seed_database
 from app.engine_graphrag.xai_reasoner import xai_reasoner
 from app.engine_topology.parser import topology_parser
+from app.engine_topology.schema import CopilotChatRequest, WhatIfSimulateRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("garc.main")
@@ -173,7 +174,34 @@ def engine2_commit(req: Engine2CommitRequest):
     res = topology_parser.persist_topology_to_neo4j(req.nodes, req.edges)
     return res
 
+@app.post("/api/chat/copilot")
+def copilot_chat_endpoint(req: CopilotChatRequest):
+    """
+    Unified Cyber Clinic Copilot:
+    Answers cybersecurity/NIST questions in plain English and incrementally mutates
+    the live Cytoscape network topology with Agentic Critic validation.
+    """
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    return topology_parser.conversational_copilot(req.message, req.history)
+
+@app.post("/api/sandbox/simulate-fix")
+def simulate_fix_endpoint(req: WhatIfSimulateRequest):
+    """
+    Interactive 'What-If' Remediation Sandbox:
+    Simulates a high-impact security fix on active topology and returns recalculated scorecard.
+    """
+    return topology_parser.simulate_what_if_remediation(req.fix_type, req.target_node_id)
+
+@app.post("/api/sandbox/revert-fix")
+def revert_fix_endpoint():
+    """
+    Reverts all active What-If simulations to original topology baseline.
+    """
+    return topology_parser.revert_what_if_remediation()
+
 @app.post("/api/audit/evaluate-topology")
+
 def audit_evaluate_topology():
     """
     Executes a high-speed parallel audit across the 5 core technical families
@@ -183,6 +211,14 @@ def audit_evaluate_topology():
     edges = topology_parser.active_topology_edges
     res = xai_reasoner.run_parallel_topology_audit(nodes, edges)
     return res
+
+@app.get("/api/compliance/baseline-graph")
+def get_baseline_compliance_graph():
+    """
+    Returns the static NIST SP 800-171 Rev 3 CPRT Knowledge Graph
+    across the 5 technical families immediately without waiting for an active audit.
+    """
+    return xai_reasoner.get_baseline_cprt_graph()
 
 @app.post("/api/audit/explain-control")
 def audit_explain_control(req: ExplainControlRequest):
