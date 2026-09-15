@@ -11,6 +11,35 @@
 
 ---
 
+## 📸 Demo Preview
+
+![GaRC Cyber Clinic Copilot & Topology Dashboard](images/image.png)
+
+---
+
+## 📑 Table of Contents
+
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Key Capabilities](#key-capabilities)
+  - [1. Conversational Cyber Clinic Copilot](#1-conversational-cyber-clinic-copilot)
+  - [2. Agentic Critic and Self-Repair Loop](#2-agentic-critic-and-self-repair-loop)
+  - [3. Interactive "What-If" Remediation Sandbox](#3-interactive-what-if-remediation-sandbox)
+  - [4. Dual-Mode Cytoscape Graph Visualization](#4-dual-mode-cytoscape-graph-visualization)
+  - [5. Decoupled Baseline Knowledge Graph](#5-decoupled-baseline-knowledge-graph)
+- [Technical Control Families Covered](#technical-control-families-covered)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Quick Start: Built-in Standalone UI (Recommended)](#quick-start-built-in-standalone-ui-recommended)
+  - [Alternative Setup: Dedicated Neo4j Stack (Docker)](#alternative-setup-dedicated-neo4j-stack-docker)
+  - [Alternative Setup: React + Vite Frontend](#alternative-setup-react--vite-frontend)
+- [API Endpoints](#api-endpoints)
+- [Automated Test Suite](#automated-test-suite)
+- [Project Structure](#project-structure)
+- [License](#license)
+
+---
+
 ## Overview
 
 GaRC (Graph-augmented Risk & Compliance) is an Explainable AI (XAI) cybersecurity decision-support platform engineered to make **NIST SP 800-171 Rev 3** compliance and network security posture assessment accessible, deterministic, and actionable for small organizations, community clinics, non-profits, and defense supply chain contractors lacking dedicated security personnel.

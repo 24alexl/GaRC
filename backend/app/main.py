@@ -183,7 +183,12 @@ def copilot_chat_endpoint(req: CopilotChatRequest):
     """
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
-    return topology_parser.conversational_copilot(req.message, req.history)
+    return topology_parser.conversational_copilot(
+        req.message,
+        req.history,
+        current_nodes=req.current_nodes,
+        current_edges=req.current_edges
+    )
 
 @app.post("/api/sandbox/simulate-fix")
 def simulate_fix_endpoint(req: WhatIfSimulateRequest):

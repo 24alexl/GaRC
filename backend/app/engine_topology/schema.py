@@ -6,6 +6,7 @@ NodeType = Literal["device", "server", "storage", "data_asset", "firewall", "use
 RelationshipType = Literal["MEMBER_OF", "LOGS_IN_VIA", "ROUTES_TO", "ACCESSES", "STORES", "PROTECTS", "STORES_CUI"]
 
 class NetworkNode(BaseModel):
+    model_config = {"extra": "ignore"}
     id: str = Field(description="Unique node identifier e.g. dev_workstation_1, nas_storage, firewall_gateway")
     name: str = Field(description="Human readable name e.g. Office NAS, Windows Admin PC")
     type: str = Field(description="Node type: device, server, storage, data_asset, firewall, user, subnet, cloud_service")
@@ -16,6 +17,7 @@ class NetworkNode(BaseModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Extraction confidence score from 0.0 to 1.0")
 
 class NetworkEdge(BaseModel):
+    model_config = {"extra": "ignore"}
     source: str = Field(description="Source node ID")
     target: str = Field(description="Target node ID")
     relationship: str = Field(description="Relationship type: MEMBER_OF, LOGS_IN_VIA, ROUTES_TO, ACCESSES, STORES, PROTECTS, STORES_CUI")
@@ -53,6 +55,8 @@ class CopilotChatMessage(BaseModel):
 class CopilotChatRequest(BaseModel):
     message: str
     history: List[CopilotChatMessage] = Field(default_factory=list)
+    current_nodes: Optional[List[Dict[str, Any]]] = None
+    current_edges: Optional[List[Dict[str, Any]]] = None
 
 class CopilotChatResponse(BaseModel):
     reply: str

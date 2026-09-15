@@ -738,10 +738,26 @@
       const [copilotInput, setCopilotInput] = useState("");
       const [copilotLoading, setCopilotLoading] = useState(false);
       const [copilotFollowups, setCopilotFollowups] = useState([
+        "🗺️ What do you see in my network map?",
         "What is CUI and does my company have it?",
         "We have 4 Windows PCs and a Synology NAS with patient records",
         "How do I isolate Guest Wi-Fi from our office data?"
       ]);
+
+      const handleResetCopilotChat = () => {
+        setCopilotMessages([
+          {
+            role: "assistant",
+            content: `### GaRC Cyber Clinic Copilot Ready\n\nI have active visibility into your network canvas (${topologyResult?.nodes?.length || 0} assets and ${topologyResult?.edges?.length || 0} connections loaded).\n\n- Click **'🔍 Inspect Active Network Map'** to analyze your diagram.\n- Ask any question about **NIST SP 800-171 Rev 3**, **CUI**, **MFA**, or **VLANs**.\n- Tell me about hardware you'd like to add or change.`,
+            kg_traces: [
+              { id: "03.01.01", label: "03.01.01 Access Control", type: "control", family: "03.01", status: "ACTIVE" },
+              { id: "03.05.03", label: "03.05.03 Multi-Factor Auth", type: "control", family: "03.05", status: "ACTIVE" },
+              { id: "03.13.01", label: "03.13.01 Boundary Protection", type: "control", family: "03.13", status: "ACTIVE" }
+            ]
+          }
+        ]);
+        showToast("Copilot chat reset to fresh state.");
+      };
 
       // Jump to Node or Control from KG Trace link
       const handleTraceClick = (trace) => {
@@ -1057,7 +1073,9 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               message: text,
-              history: newHistory.slice(-6)
+              history: newHistory.slice(-6),
+              current_nodes: topologyResult?.nodes || [],
+              current_edges: topologyResult?.edges || []
             })
           });
           const data = await res.json();
@@ -1916,19 +1934,45 @@
                 {/* View: Cyber Clinic Copilot Conversational Chat */}
                 {activeCanvasTab === "copilot" && (
                   <div className="flex-1 w-full flex flex-col overflow-hidden bg-slate-950/60 rounded-lg p-2.5">
-                    {/* Header bar */}
-                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 shrink-0">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                        <span className="text-xs font-bold text-slate-200">Cyber Clinic Copilot (NIST SP 800-171 Advisor & Topology Builder)</span>
+                    {/* Header bar with Active Network Visibility Banner & Action Buttons */}
+                    <div className="flex flex-col gap-1.5 pb-2 mb-2 border-b border-slate-800 shrink-0">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                          <span className="text-xs font-bold text-slate-200">Cyber Clinic Copilot</span>
+                          <span className="text-[10px] text-slate-400 font-normal">(NIST SP 800-171 Advisor & Topology Builder)</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={handleResetCopilotChat}
+                            className="text-[10px] text-slate-400 hover:text-rose-300 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-2 py-0.5 rounded transition flex items-center gap-1"
+                            title="Reset chat to fresh greeting"
+                          >
+                            <span>🧹</span>
+                            <span>Clear Chat</span>
+                          </button>
+                          <span className="text-[10px] text-cyan-400 bg-cyan-950/70 border border-cyan-800/60 px-2 py-0.5 rounded font-mono">
+                            🔗 KG Tracing
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-cyan-400 bg-cyan-950/70 border border-cyan-800/60 px-2 py-0.5 rounded font-mono">
-                          🔗 KG Tracing Active
-                        </span>
-                        <span className="text-[10px] text-indigo-400 bg-indigo-950/70 border border-indigo-800/60 px-2 py-0.5 rounded font-mono">
-                          Agentic Critic Active
-                        </span>
+
+                      {/* Network Map Visibility Status Bar */}
+                      <div className="flex items-center justify-between bg-cyan-950/40 border border-cyan-800/50 px-2.5 py-1.5 rounded-lg">
+                        <div className="flex items-center gap-2 text-[11px] text-cyan-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          <span>
+                            <strong>Live Map Visibility:</strong> Copilot sees <strong>{topologyResult?.nodes?.length || 0} assets</strong> and <strong>{topologyResult?.edges?.length || 0} links</strong>
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleSendCopilotMessage("Inspect my current network map and tell me what you see")}
+                          disabled={copilotLoading}
+                          className="text-[10px] font-semibold bg-cyan-600 hover:bg-cyan-500 text-white px-2.5 py-1 rounded transition shadow flex items-center gap-1 shrink-0"
+                          title="Ask Copilot to analyze your active network topology"
+                        >
+                          <span>🔍 Inspect Active Network Map</span>
+                        </button>
                       </div>
                     </div>
 

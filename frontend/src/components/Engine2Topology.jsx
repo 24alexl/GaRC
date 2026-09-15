@@ -40,6 +40,20 @@ export default function Engine2Topology() {
 
   const [topoStep, setTopoStep] = useState('');
 
+  const handleResetCopilotChat = () => {
+    setCopilotMessages([
+      {
+        role: 'assistant',
+        content: `### GaRC Cyber Clinic Copilot Ready\n\nI have active visibility into your network map (${parseResult?.nodes?.length || 0} assets loaded).\n\n- Click **'Inspect Active Network Map'** to analyze your architecture.\n- Ask questions about **NIST SP 800-171 Rev 3**, **CUI**, **MFA**, or **VLANs**.\n- Tell me about hardware you'd like to add or update.`,
+        kg_traces: [
+          { id: "03.01.01", label: "03.01.01 Access Control", type: "control", family: "03.01", status: "ACTIVE" },
+          { id: "03.05.03", label: "03.05.03 Multi-Factor Auth", type: "control", family: "03.05", status: "ACTIVE" },
+          { id: "03.13.01", label: "03.13.01 Boundary Protection", type: "control", family: "03.13", status: "ACTIVE" }
+        ]
+      }
+    ]);
+  };
+
   const handleSendCopilot = async (msgToSend) => {
     const text = msgToSend || copilotInput;
     if (!text.trim() || copilotLoading) return;
@@ -55,7 +69,9 @@ export default function Engine2Topology() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: text,
-          history: newHistory.slice(-6)
+          history: newHistory.slice(-6),
+          current_nodes: parseResult?.nodes || [],
+          current_edges: parseResult?.edges || []
         })
       });
       const data = await res.json();
@@ -235,6 +251,33 @@ export default function Engine2Topology() {
         {/* MODE A: Guided Cyber Clinic Copilot Chat */}
         {inputMode === 'copilot' && (
           <div className="flex-1 flex flex-col pt-3 overflow-hidden">
+            {/* Active Network Map Visibility Status Bar */}
+            <div className="flex items-center justify-between bg-purple-950/40 border border-purple-800/50 px-2.5 py-1.5 rounded-lg mb-2">
+              <div className="flex items-center gap-1.5 text-[11px] text-purple-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span>
+                  <strong>Map Visibility:</strong> Seeing <strong>{parseResult?.nodes?.length || 0} assets</strong>
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => handleSendCopilot("Inspect my current network map and tell me what you see")}
+                  disabled={copilotLoading}
+                  className="text-[10px] font-semibold bg-purple-600 hover:bg-purple-500 text-white px-2 py-0.5 rounded transition shadow"
+                  title="Ask Copilot to analyze your active network topology"
+                >
+                  🔍 Inspect Map
+                </button>
+                <button
+                  onClick={handleResetCopilotChat}
+                  className="text-[10px] text-slate-400 hover:text-slate-200 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded transition"
+                  title="Clear chat"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
             <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 max-h-[320px]">
               {copilotMessages.map((msg, mIdx) => (
                 <div

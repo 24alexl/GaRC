@@ -1106,9 +1106,23 @@ Respond with helpful cyber clinic guidance, network topology mutations, and KG t
         followups: List[str] = []
         reply: str = ""
 
+        # Check if user is asking about network map, topology, assets, or what Copilot sees
+        is_map_query = any(w in msg_lower for w in [
+            "see", "map", "network", "topology", "device", "asset", "hardware",
+            "setup", "posture", "review", "look at", "inspect", "show", "current",
+            "diagram", "graph", "what do you see", "view", "inventory", "canvas",
+            "what is here", "what's here", "tell me about my", "audit my"
+        ])
+
+        # Check if message is a greeting or introductory inquiry
+        is_greeting = (
+            any(msg_lower.strip().startswith(g) for g in ["hi", "hello", "hey", "howdy", "greetings", "good morning", "good afternoon"])
+            or msg_lower.strip() in ["help", "who are you", "what can you do", "who made you"]
+        )
+
         is_hardware_action = (
             any(w in msg_lower for w in ["install", "added", "add ", "bought", "deploy", "setup", "synology", "nas", "macbook"])
-            and not any(q in msg_lower for q in ["what is", "why do", "how do", "how should", "explain", "why does"])
+            and not any(q in msg_lower for q in ["what is", "why do", "how do", "how should", "explain", "why does", "what do you see", "can you see"])
         )
 
         if is_hardware_action:
@@ -1177,10 +1191,124 @@ Respond with helpful cyber clinic guidance, network topology mutations, and KG t
                 "Run an audit to check our updated score"
             ]
 
+        elif is_map_query:
+            # Full structured visibility into active network map
+            if not nodes:
+                reply = (
+                    "### 🗺️ Network Map Analysis: Empty Canvas\n\n"
+                    "I am actively monitoring your canvas, but **no devices or subnets are currently mapped**.\n\n"
+                    "- **Quick Start**: Select a small business template above (*Small Healthcare Clinic*, *Local Law / CPA Practice*, etc.) to load a realistic architecture.\n"
+                    "- **Natural Language**: Or tell me what hardware you use (*'We have 6 Dell laptops, a Synology NAS with client files, and guest Wi-Fi'*), and I will build your topology automatically!"
+                )
+                kg_traces = [
+                    {"id": "03.01.01", "label": "03.01 Access Control", "type": "control", "family": "03.01", "status": "ACTIVE"},
+                    {"id": "03.13.01", "label": "03.13 Boundary Protection", "type": "control", "family": "03.13", "status": "ACTIVE"}
+                ]
+                followups = [
+                    "Load Small Clinic Template",
+                    "We have 5 laptops and a Synology NAS",
+                    "What is CUI and does my business have it?"
+                ]
+            else:
+                subnets = [n for n in nodes if n.type == "subnet"]
+                firewalls = [n for n in nodes if n.type == "firewall" or "firewall" in n.name.lower() or "gateway" in n.name.lower()]
+                storages = [n for n in nodes if n.type in ["storage", "server", "data_asset"]]
+                endpoints = [n for n in nodes if n.type in ["device", "workstation", "laptop", "user"]]
+                cui_nodes = [n for n in nodes if n.stores_cui]
+                unencrypted_cui = [n for n in cui_nodes if not n.has_firewall_or_mfa]
+
+                device_lines = []
+                for n in nodes[:8]:
+                    flags = []
+                    if n.stores_cui:
+                        flags.append("📁 CUI")
+                    if n.has_firewall_or_mfa:
+                        flags.append("🔒 MFA/Encrypted")
+                    flag_str = f" ({', '.join(flags)})" if flags else ""
+                    device_lines.append(f"- **{n.name}** (`{n.type}` · `{n.ip_or_subnet}`){flag_str}")
+
+                extra_count = len(nodes) - 8
+                if extra_count > 0:
+                    device_lines.append(f"- *...and {extra_count} more asset(s)*")
+
+                cui_status = (
+                    f"⚠️ **{len(unencrypted_cui)} of {len(cui_nodes)} CUI asset(s) lack confirmed volume encryption** (NIST 03.08.03)"
+                    if unencrypted_cui else
+                    f"✅ All {len(cui_nodes)} CUI asset(s) have confirmed encryption"
+                    if cui_nodes else "ℹ️ No assets currently designated as CUI repositories"
+                )
+
+                fw_status = (
+                    f"✅ **Boundary Gateway Active**: {firewalls[0].name} (NIST 03.13.01)"
+                    if firewalls else
+                    "🚨 **Missing Boundary Firewall**: No dedicated security gateway detected (NIST 03.13.01)"
+                )
+
+                reply = (
+                    f"### 🗺️ Live Network Map Inspection\n\n"
+                    f"I can see **{len(nodes)} assets** and **{len(edges)} connections** active on your canvas:\n\n"
+                    + "\n".join(device_lines) + "\n\n"
+                    f"**Security & NIST SP 800-171 Rev 3 Observations:**\n"
+                    f"- {fw_status}\n"
+                    f"- {cui_status}\n"
+                    f"- 🌐 **Subnets & Segmentation**: {len(subnets)} subnet zone(s) mapped (`{', '.join(s.name for s in subnets)}`)\n"
+                    f"- 💻 **Workstations / Endpoints**: {len(endpoints)} user device(s) connected\n\n"
+                    f"*Click any trace tag below to highlight that asset or control directly in the canvas!*"
+                )
+
+                kg_traces = []
+                if firewalls:
+                    kg_traces.append({"id": firewalls[0].id, "label": firewalls[0].name, "type": "node", "status": "MET"})
+                    kg_traces.append({"id": "03.13.01", "label": "03.13.01 Boundary Protection", "type": "control", "family": "03.13", "status": "MET"})
+                else:
+                    kg_traces.append({"id": "03.13.01", "label": "03.13.01 Boundary Protection", "type": "control", "family": "03.13", "status": "UNMET"})
+
+                if cui_nodes:
+                    for cn in cui_nodes[:2]:
+                        kg_traces.append({"id": cn.id, "label": cn.name, "type": "node", "status": "MET" if cn.has_firewall_or_mfa else "NEEDS_INFO"})
+                    kg_traces.append({"id": "03.08.03", "label": "03.08.03 Media Encryption", "type": "control", "family": "03.08", "status": "ACTIVE"})
+
+                kg_traces.append({"id": "03.01.01", "label": "03.01.01 Authorized Access Control", "type": "control", "family": "03.01", "status": "ACTIVE"})
+
+                followups = [
+                    "Simulate: Enable encryption across CUI storage",
+                    "How do we isolate Guest Wi-Fi from our office LAN?",
+                    "What are the top 3 compliance fixes for this network?"
+                ]
+
+        elif is_greeting:
+            asset_summary = f"{len(nodes)} assets and {len(edges)} connections" if nodes else "an empty canvas"
+            reply = (
+                f"### Hello! I'm your GaRC Cyber Clinic Copilot 👋\n\n"
+                f"I am actively monitoring your **live network map** ({asset_summary} currently detected).\n\n"
+                f"Here is how I can assist you:\n"
+                f"- **🔍 Inspect Your Map**: Ask *'What do you see in my network map?'* or click **Inspect Active Network Map** above.\n"
+                f"- **➕ Add / Update Equipment**: Say *'Add 4 MacBooks and a Synology NAS with contracts'* and I'll update the diagram.\n"
+                f"- **🛡️ Compliance Guidance**: Ask about *CUI*, *MFA*, *BitLocker*, *Guest Wi-Fi*, or *NIST SP 800-171 Rev 3* requirements.\n"
+                f"- **⚡ What-If Sandbox**: Test one-click remediations (encryption, MFA, VLAN segmentation) to preview your score delta."
+            )
+            kg_traces = [
+                {"id": "03.01.01", "label": "03.01 Access Control", "type": "control", "family": "03.01", "status": "ACTIVE"},
+                {"id": "03.05.03", "label": "03.05 Multi-Factor Auth", "type": "control", "family": "03.05", "status": "ACTIVE"},
+                {"id": "03.13.01", "label": "03.13 Boundary Protection", "type": "control", "family": "03.13", "status": "ACTIVE"}
+            ]
+            followups = [
+                "What do you see in my network map?",
+                "What is CUI and does my business have it?",
+                "Simulate: Enable encryption on all storage"
+            ]
+
         elif "cui" in msg_lower or "unclassified" in msg_lower:
+            cui_nodes = [n for n in nodes if n.stores_cui]
+            cui_note = (
+                f"In your active map, **{', '.join(n.name for n in cui_nodes)}** {'is' if len(cui_nodes)==1 else 'are'} designated as CUI repositories."
+                if cui_nodes else
+                "In your active map, no assets are currently marked as storing CUI."
+            )
             reply = (
                 "### Controlled Unclassified Information (CUI) & Scoping\n\n"
                 "**CUI** is sensitive government-created or owned information requiring safeguarding under federal contracts (DFARS 252.204-7012 and NIST SP 800-171 Rev 3).\n\n"
+                f"**Your Active Topology**: {cui_note}\n\n"
                 "**Key Requirements for Small Businesses:**\n"
                 "- **Access Limitation (NIST 03.01.01)**: Only personnel with a verified 'need-to-know' and active background checks may access CUI repositories.\n"
                 "- **At-Rest Volume Encryption (NIST 03.08.03)**: Any drive, NAS volume, or laptop storing CUI must be encrypted with FIPS-validated AES-256 (BitLocker, FileVault, or LUKS).\n"
@@ -1292,80 +1420,28 @@ Respond with helpful cyber clinic guidance, network topology mutations, and KG t
             ]
 
         else:
-            extracted_items = []
-            if "macbook" in msg_lower or "laptop" in msg_lower or "workstation" in msg_lower:
-                node_id = f"dev_laptop_{len(nodes) + 1}"
-                mutations.append({
-                    "action": "ADD_NODE",
-                    "node": {
-                        "id": node_id,
-                        "name": "Staff Workstation / Laptop",
-                        "type": "device",
-                        "ip_or_subnet": "192.168.1.x",
-                        "stores_cui": "cui" in msg_lower,
-                        "has_firewall_or_mfa": "mfa" in msg_lower or "encrypted" in msg_lower
-                    }
-                })
-                extracted_items.append("Staff Workstation Laptop")
-                kg_traces.append({"id": node_id, "label": "Staff Workstation", "type": "node", "status": "NEEDS_INFO"})
-
-            if "nas" in msg_lower or "synology" in msg_lower or "storage" in msg_lower or "server" in msg_lower:
-                node_id = f"storage_nas_{len(nodes) + 1}"
-                mutations.append({
-                    "action": "ADD_NODE",
-                    "node": {
-                        "id": node_id,
-                        "name": "Office NAS / File Storage",
-                        "type": "storage",
-                        "ip_or_subnet": "192.168.1.50",
-                        "stores_cui": True,
-                        "has_firewall_or_mfa": "mfa" in msg_lower or "encrypted" in msg_lower
-                    }
-                })
-                extracted_items.append("Office NAS (CUI Storage)")
-                kg_traces.append({"id": node_id, "label": "Office NAS", "type": "node", "status": "NEEDS_INFO"})
-                kg_traces.append({"id": "03.08.03", "label": "03.08.03 Media Encryption", "type": "control", "family": "03.08", "status": "ACTIVE"})
-
-            if "firewall" in msg_lower or "router" in msg_lower or "gateway" in msg_lower:
-                node_id = f"fw_gateway_{len(nodes) + 1}"
-                mutations.append({
-                    "action": "ADD_NODE",
-                    "node": {
-                        "id": node_id,
-                        "name": "Perimeter Security Gateway",
-                        "type": "firewall",
-                        "ip_or_subnet": "192.168.1.1",
-                        "has_firewall_or_mfa": True
-                    }
-                })
-                extracted_items.append("Perimeter Security Gateway")
-                kg_traces.append({"id": node_id, "label": "Perimeter Security Gateway", "type": "node", "status": "MET"})
-                kg_traces.append({"id": "03.13.01", "label": "03.13.01 Boundary Protection", "type": "control", "family": "03.13", "status": "MET"})
-
-            if extracted_items:
-                reply = (
-                    f"Got it! I've added **{', '.join(extracted_items)}** to your live network map.\n\n"
-                    "Our Critic agent has verified the connections and subnets. You can see the updated topology on the canvas."
-                )
-                actions = [f"Added {item}" for item in extracted_items]
-            else:
-                reply = (
-                    "### Welcome to Cyber Clinic Copilot\n\n"
-                    "I help organizations map their network infrastructure and achieve **NIST SP 800-171 Rev 3** compliance.\n\n"
-                    "- **Describe your hardware**: *'We have 8 Dell desktops, a Synology NAS with contracts, and guest Wi-Fi'*\n"
-                    "- **Ask compliance questions**: *'What is CUI?'*, *'How do we enforce MFA?'*, or *'How can we segment guest Wi-Fi?'*\n"
-                    "- **Simulate remedies**: Ask to test encryption or firewall changes to see your score improve."
-                )
-                kg_traces = [
-                    {"id": "03.01.01", "label": "03.01 Access Control", "type": "control", "family": "03.01", "status": "ACTIVE"},
-                    {"id": "03.05.03", "label": "03.05 Multi-Factor Auth", "type": "control", "family": "03.05", "status": "ACTIVE"},
-                    {"id": "03.13.01", "label": "03.13 Boundary Protection", "type": "control", "family": "03.13", "status": "ACTIVE"}
-                ]
-
+            # Intelligent general response that references active topology and NEVER repeats welcome text
+            asset_info = f"Your network currently has **{len(nodes)} mapped assets** and **{len(edges)} connections**." if nodes else "Your canvas is currently empty."
+            reply = (
+                f"### Cyber Clinic Guidance\n\n"
+                f"Regarding **\"{message.strip()}\"**:\n\n"
+                f"Under **NIST SP 800-171 Rev 3**, security controls work in synergy across Access Control (03.01), Identification (03.05), Media Protection (03.08), and Communications Protection (03.13).\n\n"
+                f"**Active Topology Context**: {asset_info}\n\n"
+                f"- **Recommendations**:\n"
+                f"  1. Ensure all CUI repositories are encrypted with FIPS-validated AES-256 (03.08.03).\n"
+                f"  2. Enforce Multi-Factor Authentication (MFA) across all administrative consoles and remote users (03.05.03).\n"
+                f"  3. Maintain strict boundary separation between guest/visitor wireless and internal production assets (03.13.01).\n\n"
+                f"Would you like me to inspect your network map, add new hardware, or simulate a security remediation?"
+            )
+            kg_traces = [
+                {"id": "03.01.01", "label": "03.01 Access Control", "type": "control", "family": "03.01", "status": "ACTIVE"},
+                {"id": "03.05.03", "label": "03.05 Multi-Factor Auth", "type": "control", "family": "03.05", "status": "ACTIVE"},
+                {"id": "03.13.01", "label": "03.13 Boundary Protection", "type": "control", "family": "03.13", "status": "ACTIVE"}
+            ]
             followups = [
-                "What is CUI and does my business have it?",
-                "How do we configure MFA for remote employees?",
-                "Simulate: Isolate Guest Wi-Fi VLAN"
+                "What do you see in my network map?",
+                "Simulate: Enable encryption on CUI storage",
+                "How do we configure MFA for remote workers?"
             ]
 
         return {
